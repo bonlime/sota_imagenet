@@ -401,7 +401,7 @@ class Scheduler():
             log.event('Changing Momentum from {} to {}'.format(self.current_mom, mom))
 
         self.current_lr = lr
-        self.current_lr = mom
+        self.current_mom = mom
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
             param_group['momentum'] = mom
