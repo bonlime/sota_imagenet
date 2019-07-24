@@ -21,13 +21,13 @@ import pickle
 from tqdm import tqdm
 
 
-def get_loaders(traindir, valdir, sz, bs, fp16=True, val_bs=None, workers=8, rect_val=False, rect_train=False, min_scale=0.08, distributed=False):
+def get_loaders(traindir, valdir, sz, bs, val_bs=None, workers=8, rect_val=False, rect_train=False, min_scale=0.08, distributed=False):
     val_bs = val_bs or bs
     train_dtst, train_sampler = create_dataset(traindir, bs, sz, rect_train, distributed, True)
     train_loader = torch.utils.data.DataLoader(
-        train_dtst, batch_size=bs, shuffle=(train_sampler is None),
+        train_dtst, 
         num_workers=workers, pin_memory=True, collate_fn=fast_collate,
-        sampler=train_sampler)
+        batch_sampler=train_sampler)
 
     val_dtst, val_sampler = create_dataset(valdir, bs, sz, rect_val, distributed, False)
     val_loader = torch.utils.data.DataLoader(
@@ -35,8 +35,8 @@ def get_loaders(traindir, valdir, sz, bs, fp16=True, val_bs=None, workers=8, rec
         num_workers=workers, pin_memory=True, collate_fn=fast_collate,
         batch_sampler=val_sampler)
 
-    train_loader = BatchTransformDataLoader(train_loader, fp16=fp16)
-    val_loader = BatchTransformDataLoader(val_loader, fp16=fp16)
+    train_loader = BatchTransformDataLoader(train_loader)
+    val_loader = BatchTransformDataLoader(val_loader)
 
     return train_loader, val_loader, train_sampler, val_sampler
 
@@ -70,18 +70,12 @@ class BatchTransformDataLoader():
         self.loader = loader
         self.mean = torch.tensor([0.485 * 255, 0.456 * 255, 0.406 * 255]).cuda().view(1, 3, 1, 1)
         self.std = torch.tensor([0.229 * 255, 0.224 * 255, 0.225 * 255]).cuda().view(1, 3, 1, 1)
-        self.fp16 = fp16
-        if self.fp16:
-            self.mean, self.std = self.mean.half(), self.std.half()
 
     def __len__(self): return len(self.loader)
 
     def process_tensors(self, input, target, non_blocking=True):
         input = input.cuda(non_blocking=non_blocking)
-        if self.fp16:
-            input = input.half()
-        else:
-            input = input.float()
+        input = input.float()
         if len(input.shape) < 3:
             return input, target.cuda(non_blocking=non_blocking)
         return input.sub_(self.mean).div_(self.std), target.cuda(non_blocking=non_blocking)

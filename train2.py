@@ -1,4 +1,4 @@
-import argparse, os, shutil, time, warnings
+import argparse, os, shutil, time, warnings, math
 from datetime import datetime
 from pathlib import Path
 import sys, os
@@ -15,21 +15,32 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 
-# import models
-from fp16util import *
-
-import resnet
+import torchvision.models as models
+# for fp16
+import apex.amp
 import copy
 
-import dataloader
-import experimental_utils
-import dist_utils
-from logger import TensorboardLogger, FileLogger
-from meter import AverageMeter, NetworkMeter, TimeMeter
+from modules import dataloader
+from modules import experimental_utils
+from modules  import dist_utils
+from modules.logger import TensorboardLogger, FileLogger
+from modules.meter import AverageMeter, TimeMeter
+from modules.shedulers import DataManager, Scheduler
 
 def get_parser():
+    model_names = sorted(name for name in models.__dict__
+                     if name.islower() and not name.startswith("__")
+                     and callable(models.__dict__[name]))
+
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     parser.add_argument('data', metavar='DIR', help='path to dataset')
+    parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
+                    choices=model_names,
+                    help='model architecture: ' +
+                    ' | '.join(model_names) +
+                    ' (default: resnet18)')
+    parser.add_argument('--pretrained', dest='pretrained', action='store_true',
+                    help='use pre-trained model')
     parser.add_argument('--phases', type=str,
                     help='Specify epoch order of data resize and learning rate schedule: [{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]')
     # parser.add_argument('--save-dir', type=str, default=Path.cwd(), help='Directory to save logs and models.')
@@ -37,7 +48,7 @@ def get_parser():
                         help='number of data loading workers (default: 8)')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
+    parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum (default: 0.9)')
     parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--init-bn0', action='store_true', help='Intialize running batch norm mean to 0')
@@ -48,7 +59,8 @@ def get_parser():
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
-    parser.add_argument('--fp16', action='store_true', help='Run model fp16 mode. Default True')
+    parser.add_argument('--opt_level', default='00', type=str, choices=['00','01','02','03'], 
+                        help='optimizatin level for apex. (default: "00")')
     parser.add_argument('--loss-scale', type=float, default=1024,
                         help='Loss scaling, positive power of 2 values can improve fp16 convergence.')
     parser.add_argument('--distributed', action='store_true', help='Run distributed training. Default True')
@@ -84,7 +96,7 @@ log = FileLogger(args.logdir, is_master=is_master, is_rank0=is_rank0)
 def main():
     os.system('shutdown -c')  # cancel previous shutdown command
     log.console(args)
-    tb.log('sizes/world', dist_utils.env_world_size())
+    #tb.log('sizes/world', dist_utils.env_world_size())
 
     # need to index validation directory before we start counting the time
     dataloader.sort_ar(args.data+'/validation')
@@ -98,21 +110,34 @@ def main():
 
 
     log.console("Loading model")
-    model = resnet.resnet50(bn0=args.init_bn0).cuda()
-    if args.fp16: model = network_to_half(model)
-    if args.distributed: model = dist_utils.DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
+    if args.pretrained:
+        print("=> using pre-trained model '{}'".format(args.arch))
+        model = models.__dict__[args.arch](pretrained=True)
+    else:
+        print("=> creating model '{}'".format(args.arch))
+        model = models.__dict__[args.arch]()
+
+    #model = resnet.resnet50(bn0=args.init_bn0).cuda()
+    #if args.fp16: model = network_to_half(model)
+    #if args.distributed: model = dist_utils.DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
     best_top5 = 93 # only save models over 93%. Otherwise it stops to save every time
 
-    global model_params, master_params
-    if args.fp16: model_params, master_params = prep_param_lists(model)
-    else: model_params = master_params = model.parameters()
-
-    optim_params = experimental_utils.bnwd_optim_params(model, model_params, master_params) if args.no_bn_wd else master_params
+    #global model_params, master_params
+    #if args.fp16: model_params, master_params = prep_param_lists(model)
+    #else: model_params = master_params = model.parameters()
+    # TODO return this feature
+    #optim_params = experimental_utils.bnwd_optim_params(model, model_params, master_params) if args.no_bn_wd else master_params
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
     optimizer = torch.optim.SGD(optim_params, 0, momentum=args.momentum, weight_decay=args.weight_decay) # start with 0 lr. Scheduler will change this later
     
+    
+    model, optimizer = amp.initialize(model, optimizer, 
+                                      opt_level=args.opt_level, 
+                                      #keep_batchnorm_fp32=args.keep_batchnorm_fp32, 
+                                      loss_scale=args.loss_scale)
+
     if args.resume:
         checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.local_rank))
         model.load_state_dict(checkpoint['state_dict'])
@@ -121,7 +146,7 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer'])
             
     # save script so we can reproduce from logs
-    shutil.copy2(os.path.realpath(__file__), f'{args.logdir}')
+    shutil.copy2(os.path.realpath(__file__), '{}'.format(args.logdir))
 
     log.console("Creating data loaders (this could take up to 10 minutes if volume needs to be warmed up)")
     phases = eval(args.phases)
@@ -143,18 +168,17 @@ def main():
         top1, top5 = validate(dm.val_dl, model, criterion, epoch, start_time)
 
         time_diff = (datetime.now()-start_time).total_seconds()/3600.0
-        log.event(f'~~{epoch}\t{time_diff:.5f}\t\t{top1:.3f}\t\t{top5:.3f}\n')
+        log.event('~~{}\t{:.5f}\t\t{:.3f}\t\t{:.3f}\n'.format(epoch, time_diff, top1, top5))
 
         is_best = top5 > best_top5
         best_top5 = max(top5, best_top5)
         if args.local_rank == 0:
             if is_best: save_checkpoint(epoch, model, best_top5, optimizer, is_best=True, filename='model_best.pth.tar')
             phase = dm.get_phase(epoch)
-            if phase: save_checkpoint(epoch, model, best_top5, optimizer, filename=f'sz{phase["bs"]}_checkpoint.path.tar')
+            if phase: save_checkpoint(epoch, model, best_top5, optimizer, filename='sz{}_checkpoint.path.tar'.format(phase["bs"]))
 
 
 def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
-    net_meter = NetworkMeter()
     timer = TimeMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -172,20 +196,11 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
         output = model(input)
         loss = criterion(output, target)
 
-        # compute gradient and do SGD step
-        if args.fp16:
-            loss = loss*args.loss_scale
-            model.zero_grad()
-            loss.backward()
-            model_grads_to_master_grads(model_params, master_params)
-            for param in master_params: param.grad.data = param.grad.data/args.loss_scale
-            optimizer.step()
-            master_params_to_model_params(model_params, master_params)
-            loss = loss/args.loss_scale
-        else:
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # compute grads
+        optimizer.zero_grad()
+        with amp.scale_loss(loss, optimizer) as scaled_loss:
+            scaled_loss.backward()
+        optimizer.step()
 
         # Train batch done. Logging results
         timer.batch_end()
@@ -208,18 +223,14 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
             tb.log_trn_times(timer.batch_time.val, timer.data_time.val, input.size(0))
             tb.log_trn_loss(losses.val, top1.val, top5.val)
 
-            recv_gbit, transmit_gbit = net_meter.update_bandwidth()
             tb.log("sizes/batch_total", batch_total)
-            tb.log('net/recv_gbit', recv_gbit)
-            tb.log('net/transmit_gbit', transmit_gbit)
-            
-            output = (f'Epoch: [{epoch}][{batch_num}/{len(trn_loader)}]\t'
-                      f'Time {timer.batch_time.val:.3f} ({timer.batch_time.avg:.3f})\t'
-                      f'Loss {losses.val:.4f} ({losses.avg:.4f})\t'
-                      f'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      f'Acc@5 {top5.val:.3f} ({top5.avg:.3f})\t'
-                      f'Data {timer.data_time.val:.3f} ({timer.data_time.avg:.3f})\t'
-                      f'BW {recv_gbit:.3f} {transmit_gbit:.3f}')
+
+            output = ('Epoch: [{}][{}/{}]\t'.format(epoch, batch_num, len(trn_loader)) + 
+                      'Time {:.3f} ({:.3f})\t'.format(timer.batch_time.val, timer.batch_time.avg) + 
+                      'Loss {:.4f} ({:.4f})\t'.format(losses.val, losses.avg) + 
+                      'Acc@1 {:.3f} ({:.3f})\t'.format(top1.val, top1.avg) + 
+                      'Acc@5 {:.3f} ({:.3f})\t'.format(top5.val, top5.avg) + 
+                      'Data {:.3f} ({:.3f})\t'.format(timer.data_time.val, timer.data_time.avg))
             log.verbose(output)
 
         tb.update_step_count(batch_total)
@@ -254,11 +265,11 @@ def validate(val_loader, model, criterion, epoch, start_time):
         top5.update(to_python_float(top5acc), to_python_float(batch_total))
         should_print = (batch_num%args.print_freq == 0) or (batch_num==len(val_loader))
         if args.local_rank == 0 and should_print:
-            output = (f'Test:  [{epoch}][{batch_num}/{len(val_loader)}]\t'
-                      f'Time {timer.batch_time.val:.3f} ({timer.batch_time.avg:.3f})\t'
-                      f'Loss {losses.val:.4f} ({losses.avg:.4f})\t'
-                      f'Acc@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      f'Acc@5 {top5.val:.3f} ({top5.avg:.3f})')
+            output = ('Test:  [{}][{}/{}]\t'.format(epoch, batch_num, len(val_loader)) + 
+                      'Time {:.3f} ({:.3f})\t'.format(timer.batch_time.val, timer.batch_time.avg) + 
+                      'Loss {:.4f} ({:.4f})\t'.format(losses.val, losses.avg) + 
+                      'Acc@1 {:.3f} ({:.3f})\t'.format(top1.val, top1.avg) + 
+                      'Acc@5 {:.3f} ({:.3f})'.format(top5.val, top5.avg))
             log.verbose(output)
 
     tb.log_eval(top1.avg, top5.avg, time.time()-eval_start_time)
@@ -287,10 +298,10 @@ def distributed_predict(input, target, model, criterion):
     top5 = corr5*(100.0/batch_total)
     return top1, top5, reduced_loss, batch_total
 
-
 class DataManager():
     def __init__(self, phases):
         self.phases = self.preload_phase_data(phases)
+        
     def set_epoch(self, epoch):
         cur_phase = self.get_phase(epoch)
         if cur_phase: self.set_data(cur_phase)
@@ -303,12 +314,13 @@ class DataManager():
     def set_data(self, phase):
         """Initializes data loader."""
         if phase.get('keep_dl', False):
-            log.event(f'Batch size changed: {phase["bs"]}')
+            log.event('Batch size changed: {}'.format(phase["bs"]))
             tb.log_size(phase['bs'])
             self.trn_dl.update_batch_size(phase['bs'])
             return
         
-        log.event(f'Dataset changed.\nImage size: {phase["sz"]}\nBatch size: {phase["bs"]}\nTrain Directory: {phase["trndir"]}\nValidation Directory: {phase["valdir"]}')
+        log.event('Dataset changed.\nImage size: {}\nBatch size: {}\n Train Directory: {}\nValidation Directory: {}'.format(
+            phase["sz"], phase["bs"], phase["trndir"], phase["valdir"]))
         tb.log_size(phase['bs'], phase['sz'])
 
         self.trn_dl, self.val_dl, self.trn_smp, self.val_smp = phase['data']
@@ -332,6 +344,7 @@ class DataManager():
 
     def preload_data(self, ep, sz, bs, trndir, valdir, **kwargs): # dummy ep var to prevent error
         if 'lr' in kwargs: del kwargs['lr'] # in case we mix schedule and data phases
+        if 'momentum' in kwargs: del kwargs['momentum'] # in case we mix schedule and data phases
         """Pre-initializes data-loaders. Use set_data to start using it."""
         if sz == 128: val_bs = max(bs, 512)
         elif sz == 224: val_bs = max(bs, 256)
@@ -343,52 +356,70 @@ class Scheduler():
     def __init__(self, optimizer, phases):
         self.optimizer = optimizer
         self.current_lr = None
+        self.current_mom = None
         self.phases = [self.format_phase(p) for p in phases]
         self.tot_epochs = max([max(p['ep']) for p in self.phases])
 
     def format_phase(self, phase):
         phase['ep'] = listify(phase['ep'])
         phase['lr'] = listify(phase['lr'])
-        if len(phase['lr']) == 2: 
+        phase['momentum'] = listify(phase['momentum'])
+        if len(phase['lr']) == 2 or len(phase['momentum']) == 2: 
             assert (len(phase['ep']) == 2), 'Linear learning rates must contain end epoch'
         return phase
-
-    def linear_phase_lr(self, phase, epoch, batch_curr, batch_tot):
-        lr_start, lr_end = phase['lr']
-        ep_start, ep_end = phase['ep']
-        if 'epoch_step' in phase: batch_curr = 0 # Optionally change learning rate through epoch step
-        ep_relative = epoch - ep_start
-        ep_tot = ep_end - ep_start
-        return self.calc_linear_lr(lr_start, lr_end, ep_relative, batch_curr, ep_tot, batch_tot)
-
-    def calc_linear_lr(self, lr_start, lr_end, epoch_curr, batch_curr, epoch_tot, batch_tot):
-        step_tot = epoch_tot * batch_tot
-        step_curr = epoch_curr * batch_tot + batch_curr 
-        step_size = (lr_end - lr_start)/step_tot
-        return lr_start + step_curr * step_size
     
     def get_current_phase(self, epoch):
         for phase in reversed(self.phases): 
             if (epoch >= phase['ep'][0]): return phase
         raise Exception('Epoch out of range')
-            
-    def get_lr(self, epoch, batch_curr, batch_tot):
-        phase = self.get_current_phase(epoch)
-        if len(phase['lr']) == 1: return phase['lr'][0] # constant learning rate
-        return self.linear_phase_lr(phase, epoch, batch_curr, batch_tot)
 
-    def update_lr(self, epoch, batch_num, batch_tot):
-        lr = self.get_lr(epoch, batch_num, batch_tot) 
-        if self.current_lr == lr: return
+    @staticmethod
+    def _schedule(start, end, pct, mode):
+        """anneal from `start` to `end` as pct goes from 0.0 to 1.0."""
+        if mode == 'linear':
+            return start + (end - start) * pct
+        elif mode == 'exp':
+            return start * (end / start) ** pct
+        elif mode == 'cos':
+            return end + (start - end)/2 * (math.cos(math.pi * pct) + 1)
+
+    def get_lr_mom(self, epoch, batch_curr, batch_tot):
+        phase = self.get_current_phase(epoch)
+        if len(phase['lr']) == 1: 
+            new_lr, new_mom = phase['lr'][0], phase['momemntum'][0] # constant learning rate
+        else:
+            mom_start, mom_end = phase['momentum']
+            lr_start, lr_end = phase['lr']
+            ep_start, ep_end = phase['ep']
+            ep_curr, ep_tot = ep_start - epoch, ep_end - epoch
+            perc = ep_curr * batch_tot + batch_curr / (ep_tot * batch_tot)
+            new_lr = self._schedule(lr_start, lr_end, perc, phase['mode'])
+            new_mom = self._schedule(mom_start, mom_end, perc, phase['mode'])
+        return new_lr, new_mom
+
+    def update_lr_mom(self, epoch, batch_num, batch_tot):
+        lr, mom = self.get_lr_mom(epoch, batch_num, batch_tot)
+        if self.current_lr == lr and self.current_mom == mom: return
+
         if ((batch_num == 1) or (batch_num == batch_tot)): 
-            log.event(f'Changing LR from {self.current_lr} to {lr}')
+            log.event('Changing LR from {} to {}'.format(self.current_lr, lr))
+            log.event('Changing Momentum from {} to {}'.format(self.current_mom, mom))
 
         self.current_lr = lr
+        self.current_lr = mom
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
+            param_group['momentum'] = mom
             
         tb.log("sizes/lr", lr)
-        tb.log("sizes/momentum", args.momentum)
+        tb.log("sizes/momentum", mom)
+
+def listify(p=None, q=None):
+    if p is None: p=[]
+    elif not isinstance(p, collections.Iterable): p=[p]
+    n = q if type(q)==int else 1 if q is None else len(q)
+    if len(p)==1: p = p * n
+    return p
 
 # item() is a recent addition, so this helps with backward compatibility.
 def to_python_float(t):
@@ -402,7 +433,7 @@ def save_checkpoint(epoch, model, best_top5, optimizer, is_best=False, filename=
         'best_top5': best_top5, 'optimizer' : optimizer.state_dict(),
     }
     torch.save(state, filename)
-    if is_best: shutil.copyfile(filename, f'{args.logdir}/{filename}')
+    if is_best: shutil.copyfile(filename, '{}/{}'.format(args.logdir, filename))
 
 
 def accuracy(output, target, topk=(1,)):
@@ -423,26 +454,22 @@ def correct(output, target, topk=(1,)):
         res.append(correct_k)
     return res
 
-def listify(p=None, q=None):
-    if p is None: p=[]
-    elif not isinstance(p, collections.Iterable): p=[p]
-    n = q if type(q)==int else 1 if q is None else len(q)
-    if len(p)==1: p = p * n
-    return p
+
 
 if __name__ == '__main__':
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=UserWarning)
-            main()
-        if not args.skip_auto_shutdown: os.system(f'sudo shutdown -h -P +{args.auto_shutdown_success_delay_mins}')
-    except Exception as e:
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        import traceback
-        traceback.print_tb(exc_traceback, file=sys.stdout)
-        log.event(e)
-        # in case of exception, wait 2 hours before shutting down
-        if not args.skip_auto_shutdown: os.system(f'sudo shutdown -h -P +{args.auto_shutdown_failure_delay_mins}')
-    tb.close()
+    main()
+    # try:
+    #     with warnings.catch_warnings():
+    #         warnings.simplefilter("ignore", category=UserWarning)
+    #         main()
+    #     #if not args.skip_auto_shutdown: os.system(f'sudo shutdown -h -P +{args.auto_shutdown_success_delay_mins}')
+    # except Exception as e:
+    #     exc_type, exc_value, exc_traceback = sys.exc_info()
+    #     import traceback
+    #     traceback.print_tb(exc_traceback, file=sys.stdout)
+    #     log.event(e)
+    #     # in case of exception, wait 2 hours before shutting down
+    #     #if not args.skip_auto_shutdown: os.system(f'sudo shutdown -h -P +{args.auto_shutdown_failure_delay_mins}')
+    # tb.close()
 
 
