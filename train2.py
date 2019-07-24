@@ -17,15 +17,14 @@ import torch.utils.data.distributed
 
 import torchvision.models as models
 # for fp16
-import apex.amp
+from apex import amp
 import copy
 
 from modules import dataloader
 from modules import experimental_utils
 from modules  import dist_utils
 from modules.logger import TensorboardLogger, FileLogger
-from modules.meter import AverageMeter, TimeMeter
-from modules.shedulers import DataManager, Scheduler
+from modules.meter import AverageMeter, TimeMeter   
 
 def get_parser():
     model_names = sorted(name for name in models.__dict__
@@ -48,7 +47,6 @@ def get_parser():
                         help='number of data loading workers (default: 8)')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum (default: 0.9)')
     parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--init-bn0', action='store_true', help='Intialize running batch norm mean to 0')
@@ -59,7 +57,7 @@ def get_parser():
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
-    parser.add_argument('--opt_level', default='00', type=str, choices=['00','01','02','03'], 
+    parser.add_argument('--opt_level', default='O0', type=str, choices=['O0','O1','O2','O3'], 
                         help='optimizatin level for apex. (default: "00")')
     parser.add_argument('--loss-scale', type=float, default=1024,
                         help='Loss scaling, positive power of 2 values can improve fp16 convergence.')
@@ -116,21 +114,18 @@ def main():
     else:
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
+    model = model.cuda()
 
-    #model = resnet.resnet50(bn0=args.init_bn0).cuda()
-    #if args.fp16: model = network_to_half(model)
-    #if args.distributed: model = dist_utils.DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
+    if args.distributed: 
+        raise NotImplementedError
+        model = dist_utils.DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
+
     best_top5 = 93 # only save models over 93%. Otherwise it stops to save every time
-
-    #global model_params, master_params
-    #if args.fp16: model_params, master_params = prep_param_lists(model)
-    #else: model_params = master_params = model.parameters()
-    # TODO return this feature
-    #optim_params = experimental_utils.bnwd_optim_params(model, model_params, master_params) if args.no_bn_wd else master_params
+    optim_params = experimental_utils.bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
-    optimizer = torch.optim.SGD(optim_params, 0, momentum=args.momentum, weight_decay=args.weight_decay) # start with 0 lr. Scheduler will change this later
+    optimizer = torch.optim.SGD(optim_params, 0, weight_decay=args.weight_decay) # start with 0 lr. Scheduler will change this later
     
     
     model, optimizer = amp.initialize(model, optimizer, 
@@ -190,7 +185,7 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
         if args.short_epoch and (i > 10): break
         batch_num = i+1
         timer.batch_start()
-        scheduler.update_lr(epoch, i+1, len(trn_loader))
+        scheduler.update_lr_mom(epoch, i+1, len(trn_loader))
 
         # compute output
         output = model(input)
@@ -363,8 +358,8 @@ class Scheduler():
     def format_phase(self, phase):
         phase['ep'] = listify(phase['ep'])
         phase['lr'] = listify(phase['lr'])
-        phase['momentum'] = listify(phase['momentum'])
-        if len(phase['lr']) == 2 or len(phase['momentum']) == 2: 
+        phase['mom'] = listify(phase['mom'])
+        if len(phase['lr']) == 2 or len(phase['mom']) == 2: 
             assert (len(phase['ep']) == 2), 'Linear learning rates must contain end epoch'
         return phase
     
@@ -386,9 +381,9 @@ class Scheduler():
     def get_lr_mom(self, epoch, batch_curr, batch_tot):
         phase = self.get_current_phase(epoch)
         if len(phase['lr']) == 1: 
-            new_lr, new_mom = phase['lr'][0], phase['momemntum'][0] # constant learning rate
+            new_lr, new_mom = phase['lr'][0], phase['mom'][0] # constant learning rate
         else:
-            mom_start, mom_end = phase['momentum']
+            mom_start, mom_end = phase['mom']
             lr_start, lr_end = phase['lr']
             ep_start, ep_end = phase['ep']
             ep_curr, ep_tot = ep_start - epoch, ep_end - epoch
