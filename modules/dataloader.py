@@ -20,8 +20,8 @@ import torchvision
 import pickle
 from tqdm import tqdm
 
-
-def get_loaders(traindir, valdir, sz, bs, val_bs=None, workers=8, rect_val=False, rect_train=False, min_scale=0.08, distributed=False):
+# kinda slow
+def get_loaders(traindir, valdir, sz, bs, val_bs=None, workers=8, rect_val=False, rect_train=False, min_scale=0.15, distributed=False):
     val_bs = val_bs or bs
     train_dtst, train_sampler = create_dataset(traindir, bs, sz, rect_train, distributed, True)
     train_loader = torch.utils.data.DataLoader(
@@ -203,3 +203,57 @@ def map_idx2ar(idx_ar_sorted, batch_size):
         for idx in idxs:
             idx2ar[idx] = mean
     return idx2ar
+
+
+class DataManager():
+    def __init__(self, phases):
+        self.phases = self.preload_phase_data(phases)
+        
+    def set_epoch(self, epoch):
+        cur_phase = self.get_phase(epoch)
+        if cur_phase: self.set_data(cur_phase)
+        if hasattr(self.trn_smp, 'set_epoch'): self.trn_smp.set_epoch(epoch)
+        if hasattr(self.val_smp, 'set_epoch'): self.val_smp.set_epoch(epoch)
+
+    def get_phase(self, epoch):
+        return next((p for p in self.phases if p['ep'] == epoch), None)
+
+    def set_data(self, phase):
+        """Initializes data loader."""
+        if phase.get('keep_dl', False):
+            log.event('Batch size changed: {}'.format(phase["bs"]))
+            tb.log_size(phase['bs'])
+            self.trn_dl.update_batch_size(phase['bs'])
+            return
+        
+        log.event('Dataset changed.\nImage size: {}\nBatch size: {}\n Train Directory: {}\nValidation Directory: {}'.format(
+            phase["sz"], phase["bs"], phase["trndir"], phase["valdir"]))
+        tb.log_size(phase['bs'], phase['sz'])
+
+        self.trn_dl, self.val_dl, self.trn_smp, self.val_smp = phase['data']
+        self.phases.remove(phase)
+
+        # clear memory before we begin training
+        gc.collect()
+        
+    def preload_phase_data(self, phases):
+        for phase in phases:
+            if not phase.get('keep_dl', False):
+                self.expand_directories(phase)
+                phase['data'] = self.preload_data(**phase)
+        return phases
+
+    def expand_directories(self, phase):
+        trndir = phase.get('trndir', '')
+        valdir = phase.get('valdir', trndir)
+        phase['trndir'] = args.data+trndir+'/train'
+        phase['valdir'] = args.data+valdir+'/validation'
+
+    def preload_data(self, ep, sz, bs, trndir, valdir, **kwargs): # dummy ep var to prevent error
+        if 'lr' in kwargs: del kwargs['lr']  # in case we mix schedule and data phases
+        if 'mom' in kwargs: del kwargs['mom'] # in case we mix schedule and data phases
+        """Pre-initializes data-loaders. Use set_data to start using it."""
+        if sz == 128: val_bs = max(bs, 512)
+        elif sz == 224: val_bs = max(bs, 256)
+        else: val_bs = max(bs, 128)
+        return dataloader.get_loaders(trndir, valdir, bs=bs, val_bs=val_bs, sz=sz, workers=args.workers, distributed=args.distributed, **kwargs)

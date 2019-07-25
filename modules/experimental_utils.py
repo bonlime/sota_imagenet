@@ -9,5 +9,6 @@ def bnwd_optim_params(model):
         for child in module.children(): [accum.add(p) for p in get_bn_params(child)]
         return accum
     bn_params = get_bn_params(model)
-    rem_params = [p for p in model.parameters() if p not in bn_params and p.requires_grad]
-    return [{'params':bn_params,'weight_decay':0}, {'params':rem_params}]
+    bn_params2 = [p for p in model.parameters() if p in bn_params]
+    rem_params = [p for p in model.parameters() if p not in bn_params]
+    return [{'params':bn_params2,'weight_decay':0}, {'params':rem_params}]

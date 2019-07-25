@@ -1,0 +1,5 @@
+[
+    {"ep":0,"sz":128,"bs":8, "rect_train":true, "rect_train":true},
+    {"ep":[0,1],"lr":1e-2,"mom":0.9},
+    {"ep":[2,8],"lr":[1e-2,1e-3],"mom":[0.9, 0.9], "mode":"cos"}
+]
