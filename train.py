@@ -64,7 +64,6 @@ def get_parser():
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
-    parser.add_argument('--dali-val', action='store_true', help='switches to faster DALI validation which doesnt use centercrops')
     parser.add_argument('--opt_level', default='O0', type=str, choices=['O0','O1','O2','O3'], 
                         help='optimizatin level for apex. (default: "00")')
     parser.add_argument('--distributed', action='store_true', help='Run distributed training. Default True')
@@ -209,9 +208,7 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
 
     # switch to train mode
     model.train()
-    for i, batch in enumerate(trn_loader):
-        input, target = batch[0]['data'], batch[0]['label'].squeeze().long()
-        target -= 1 # remove background class
+    for i, (input, target) in enumerate(trn_loader):
         if args.short_epoch and (i > 10): break
         batch_num = i+1
         timer.batch_start()
@@ -270,12 +267,7 @@ def validate(val_loader, model, criterion, epoch, start_time):
     model.eval()
     eval_start_time = time.time()
 
-    for i, batch in enumerate(val_loader):
-        if args.dali_val: 
-            input, target = batch[0]['data'], batch[0]['label'].squeeze().long()
-            target -= 1 # remove background class
-        else: 
-            input, target = batch
+    for i, (input, target) in enumerate(val_loader):
         
         if args.short_epoch and (i > 10): break
         batch_num = i+1
@@ -346,6 +338,10 @@ class DaliDataManager():
     def _load_data(self, ep, sz, bs, **kwargs):
         if 'lr' in kwargs: del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs: del kwargs['mom'] # in case we mix schedule and data phases
+        dali_val = False
+        if 'dali_val' in kwargs:
+            del kwargs['dali_val']
+            dali_val = True
         rect = False
         if 'rect_val' in kwargs: 
             del kwargs['rect_val']
@@ -355,7 +351,7 @@ class DaliDataManager():
         else: val_bs = max(bs, 128)
         trn_loader =  dali_dataloader.get_loader(sz=sz, bs=bs, workers=args.workers, 
                                                   device_id=0, train=True, **kwargs)
-        if args.dali_val:
+        if dali_val:
             val_loader =  dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers, 
                                                   device_id=0, train=False, **kwargs)
         else:

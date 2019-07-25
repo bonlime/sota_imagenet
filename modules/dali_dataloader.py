@@ -76,12 +76,17 @@ class HybridPipe(dali.pipeline.Pipeline):
 RECORDS_DIR = '/home/zakirov/datasets/imagenet_2012/'
 IDX_DIR = '/home/zakirov/datasets/imagenet_2012/record_idxs/'
 
-class DALIWrapper(DALIClassificationIterator):
-    def __init__(self, *args, **kwargs):
-        super(DALIWrapper, self).__init__(*args, **kwargs)
+
+class DALIWrapper:
+    def __init__(self, loader):
+        self.loader = loader
 
     def __len__(self):
-        return self._size // self.batch_size
+        return self.loader._size // self.loader.batch_size
+
+    def __iter__(self):
+        # -1 to remove background class
+        return ( (batch[0]['data'], batch[0]['label'].squeeze().long()-1) for batch in self.loader)
 
 def get_loader(sz, bs, workers, device_id, train):
     if train:
@@ -101,5 +106,5 @@ def get_loader(sz, bs, workers, device_id, train):
         sz=sz, bs=bs, num_threads=workers,
         device_id=device_id, train=train)
     pipe.build()
-    loader = DALIWrapper(pipe, size=pipe.epoch_size('Reader'))
-    return loader
+    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader'))
+    return DALIWrapper(loader)
