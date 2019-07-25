@@ -22,6 +22,7 @@ from apex import amp
 import copy
 
 from modules import dali_dataloader
+from modules.dataloader import fast_collate, create_dataset, BatchTransformDataLoader
 from modules import experimental_utils
 from modules  import dist_utils
 from modules.logger import TensorboardLogger, FileLogger
@@ -63,6 +64,7 @@ def get_parser():
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
+    parser.add_argument('--dali-val', action='store_true', help='switches to faster DALI validation which doesnt use centercrops')
     parser.add_argument('--opt_level', default='O0', type=str, choices=['O0','O1','O2','O3'], 
                         help='optimizatin level for apex. (default: "00")')
     parser.add_argument('--distributed', action='store_true', help='Run distributed training. Default True')
@@ -269,8 +271,12 @@ def validate(val_loader, model, criterion, epoch, start_time):
     eval_start_time = time.time()
 
     for i, batch in enumerate(val_loader):
-        input, target = batch[0]['data'], batch[0]['label'].squeeze().long()
-        target -= 1 # remove background class
+        if args.dali_val: 
+            input, target = batch[0]['data'], batch[0]['label'].squeeze().long()
+            target -= 1 # remove background class
+        else: 
+            input, target = batch
+        
         if args.short_epoch and (i > 10): break
         batch_num = i+1
         timer.batch_start()
@@ -322,6 +328,7 @@ def distributed_predict(input, target, model, criterion):
     top5 = corr5*(100.0/batch_total)
     return top1, top5, reduced_loss, batch_total
 
+VAL_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/validation'
 class DaliDataManager():
     """Almost the same as DataManager but lazy and only gets dataloaders when asked"""
     def __init__(self, phases):
@@ -339,13 +346,25 @@ class DaliDataManager():
     def _load_data(self, ep, sz, bs, **kwargs):
         if 'lr' in kwargs: del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs: del kwargs['mom'] # in case we mix schedule and data phases
+        rect = False
+        if 'rect_val' in kwargs: 
+            del kwargs['rect_val']
+            rect = True
         if sz == 128: val_bs = max(bs, 512)
         elif sz == 224: val_bs = max(bs, 256)
         else: val_bs = max(bs, 128)
         trn_loader =  dali_dataloader.get_loader(sz=sz, bs=bs, workers=args.workers, 
                                                   device_id=0, train=True, **kwargs)
-        val_loader =  dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers, 
+        if args.dali_val:
+            val_loader =  dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers, 
                                                   device_id=0, train=False, **kwargs)
+        else:
+            val_dtst, val_sampler = create_dataset(VAL_DIR, val_bs, sz, rect, args.distributed, False)
+            val_loader = torch.utils.data.DataLoader(
+                val_dtst,
+                num_workers=args.workers, pin_memory=True, collate_fn=fast_collate,
+                batch_sampler=val_sampler)
+            val_loader = BatchTransformDataLoader(val_loader)
         return trn_loader, val_loader
 
 # ### Learning rate scheduler

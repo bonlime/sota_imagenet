@@ -60,6 +60,7 @@ class HybridPipe(dali.pipeline.Pipeline):
         inputs = self.input(name="Reader")
         images = inputs["image/encoded"]
         labels = inputs["image/class/label"].gpu()
+        
         # Decode and augmentation
         images = self.decode(images)
         images = self.resize(images)
@@ -67,6 +68,7 @@ class HybridPipe(dali.pipeline.Pipeline):
             images = self.normalize(images, mirror=self.mirror(), 
                                     crop_pos_x=self.uniform(), crop_pos_y=self.uniform())
         else:
+            # IT'S NOT A CENTER CROP DUE TO THIS ACCURACY IS LOWER THAN possibly could be
             images = self.normalize(images)
 
         return images, labels
