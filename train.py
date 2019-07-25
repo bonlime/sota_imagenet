@@ -22,11 +22,12 @@ from apex import amp
 import copy
 
 from modules import dali_dataloader
-from modules.dataloader import fast_collate, create_dataset, BatchTransformDataLoader
 from modules import experimental_utils
 from modules  import dist_utils
 from modules.logger import TensorboardLogger, FileLogger
-from modules.meter import AverageMeter, TimeMeter   
+from modules.meter import AverageMeter, TimeMeter
+from modules.phases import PHASES   
+from modules.dataloader import fast_collate, create_dataset, BatchTransformDataLoader
 
 def get_parser():
     model_names = sorted(name for name in models.__dict__
@@ -47,7 +48,7 @@ def get_parser():
     parser.add_argument('--phases', type=str,
                     help='Specify epoch order of data resize and learning rate schedule: [{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]')
     parser.add_argument('--load-phases', action='store_true', 
-                        help='Flag to load phases.json config'),
+                        help='Flag to load phases from modules.phases config'),
     # parser.add_argument('--save-dir', type=str, default=Path.cwd(), help='Directory to save logs and models.')
     parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                         help='number of data loading workers (default: 8)')
@@ -92,27 +93,13 @@ args = get_parser().parse_args()
 # set gpu
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   
 os.environ["CUDA_VISIBLE_DEVICES"]="{}".format(args.gpu)
-
+torch.cuda.set_device(args.gpu)
 
 # Only want master rank logging to tensorboard
 is_master = (not args.distributed) or (dist_utils.env_rank()==0)
 is_rank0 = args.local_rank == 0
 tb = TensorboardLogger(args.logdir, is_master=is_master)
 log = FileLogger(args.logdir, is_master=is_master, is_rank0=is_rank0)
-
-lr = 1.0
-bs = [512, 224, 128] # largest batch size that fits in memory for each image size
-bs_scale = [x/bs[0] for x in bs]
-one_machine = [
-  {'ep':0,  'sz':128, 'bs':bs[0], 'rect_train': False},
-  {'ep':(0,7),  'lr':(lr,lr*2), 'mom':(0.9, 0.8)}, # lr warmup is better with --init-bn0
-  {'ep':(7,13), 'lr':(lr*2,lr/4), 'mom':(0.8, 0.9)}, # trying one cycle
-  {'ep':13, 'sz':224, 'bs':bs[1], 'rect_train':False},
-  {'ep':(13,22),'lr':(lr*bs_scale[1],lr/10*bs_scale[1]), 'mom':(0.9,0.9)},
-  {'ep':(22,25),'lr':(lr/10*bs_scale[1],lr/100*bs_scale[1]), 'mom':(0.9,0.9)},
-  {'ep':25, 'sz':288, 'bs':bs[2], 'min_scale':0.5, 'rect_val':True, 'rect_train':False},
-  {'ep':(25,28),'lr':(lr/100*bs_scale[2],lr/1000*bs_scale[2]), 'mom':(0.9,0.9)}
-]
 
 def main():
     os.system('shutdown -c')  # cancel previous shutdown command
@@ -166,9 +153,7 @@ def main():
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
     
     if args.load_phases:
-        phases = one_machine
-        #with open('phases.json') as fp:
-        #    phases = json.load(fp)
+        phases = PHASES
     else: phases = eval(args.phases)
     dm = DaliDataManager([copy.deepcopy(p) for p in phases if 'bs' in p])
     scheduler = Scheduler(optimizer, [copy.deepcopy(p) for p in phases if 'lr' in p])
@@ -326,8 +311,11 @@ class DaliDataManager():
     def __init__(self, phases):
         self._phases = phases
 
+    def get_phase(self, epoch):
+        return next((p for p in self._phases if p['ep'] == epoch), None)
+
     def set_epoch(self, epoch):
-        cur_phase = next((p for p in self._phases if p['ep'] == epoch), None)
+        cur_phase = self.get_phase(epoch)
         if cur_phase: self._set_data(cur_phase)
     
     def _set_data(self, phase):
@@ -350,10 +338,10 @@ class DaliDataManager():
         elif sz == 224: val_bs = max(bs, 256)
         else: val_bs = max(bs, 128)
         trn_loader =  dali_dataloader.get_loader(sz=sz, bs=bs, workers=args.workers, 
-                                                  device_id=0, train=True, **kwargs)
+                                                  device_id=args.gpu, train=True, **kwargs)
         if dali_val:
             val_loader =  dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers, 
-                                                  device_id=0, train=False, **kwargs)
+                                                  device_id=args.gpu, train=False, **kwargs)
         else:
             val_dtst, val_sampler = create_dataset(VAL_DIR, val_bs, sz, rect, args.distributed, False)
             val_loader = torch.utils.data.DataLoader(

@@ -8,7 +8,6 @@ Values in brackets are what we need. Values before are metrics in the last batch
 * Mobilenetv2: NoRect, 224        Loss 0.9992 (1.1483)    Acc@1 73.438 (71.704)   Acc@5 91.406 (90.360)
 * Mobilenetv2: Rect, 256          Loss 1.1397 (1.1010)    Acc@1 69.531 (73.464)   Acc@5 93.750 (91.686)
 
-after moving to DALI the results are always slightly worse. I think it'd due to weird croping
 
 
 
