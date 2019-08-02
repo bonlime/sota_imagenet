@@ -42,7 +42,9 @@ class HybridPipe(dali.pipeline.Pipeline):
             self.decode = dali.ops.nvJPEGDecoder(
                 device="mixed",
                 output_type=dali.types.RGB)
-        self.resize = dali.ops.Resize(device='gpu', resize_shorter=int(sz*1.14)) #, resize_x=width, resize_y=height)
+        # works much better with INTERP_TRIANGULAR 
+        self.resize = dali.ops.Resize(device='gpu', interp_type=dali.types.INTERP_TRIANGULAR,
+                                      resize_shorter=int(sz*1.14)) 
         self.normalize = dali.ops.CropMirrorNormalize(
             device="gpu",
             output_dtype=dali.types.FLOAT,
@@ -68,7 +70,6 @@ class HybridPipe(dali.pipeline.Pipeline):
             images = self.normalize(images, mirror=self.mirror(), 
                                     crop_pos_x=self.uniform(), crop_pos_y=self.uniform())
         else:
-            # IT'S NOT A CENTER CROP DUE TO THIS ACCURACY IS LOWER THAN possibly could be
             images = self.normalize(images)
 
         return images, labels
@@ -78,6 +79,7 @@ IDX_DIR = '/home/zakirov/datasets/imagenet_2012/record_idxs/'
 
 
 class DALIWrapper:
+    """Wrap dali to look like torch dataloader"""
     def __init__(self, loader):
         self.loader = loader
 
@@ -87,6 +89,9 @@ class DALIWrapper:
     def __iter__(self):
         # -1 to remove background class
         return ( (batch[0]['data'], batch[0]['label'].squeeze().long()-1) for batch in self.loader)
+    
+    def reset(self):
+        self.loader.reset()
 
 def get_loader(sz, bs, workers, device_id, train):
     if train:
