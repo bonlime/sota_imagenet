@@ -1,4 +1,16 @@
-lr = 1.0
+
+
+# # MobilenetV2 phases
+# LOADED_PHASES = [
+#   {'ep':0,  'sz':224, 'bs':96},
+#   {'ep':0,  'lr':0.045, 'mom':0.9},
+# ]
+# for ep in range(1,110):
+#     LOADED_PHASES.append({'ep':ep, 'lr':0.045*0.99**ep})
+
+
+
+lr = 0.9
 bs = [512, 224, 128] # largest batch size that fits in memory for each image size
 bs_scale = [x/bs[0] for x in bs]
 LOADED_PHASES = [
@@ -13,6 +25,8 @@ LOADED_PHASES = [
   {'ep':36, 'sz':256, 'bs':bs[2], 'rect_val':True}, 
   {'ep':(36, 40), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2]), 'mode':'cos'},
 ]
+
+
 # bs = [512, 224, 128]
 # INITIAL Phases. not enough for convergence
 # LOADED_PHASES = [

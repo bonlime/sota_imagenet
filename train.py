@@ -147,7 +147,7 @@ def main():
         raise NotImplementedError
         model = dist_utils.DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
-    best_top5 = 93  # only save models over 93%. Otherwise it stops to save every time
+    best_top5 = 87 #93  # only save models over 93%. Otherwise it stops to save every time
     optim_params = experimental_utils.bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
@@ -158,7 +158,9 @@ def main():
 
     model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level, 
-                                      loss_scale=2048)
+                                      loss_scale=1 if args.opt_level== 'O0' else 2048,
+                                      max_loss_scale=2.**13,
+                                      min_loss_scale=1.)
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
@@ -208,16 +210,16 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-
+    loader_len = trn_loader._size // trn_loader.batch_size
     # switch to train mode
     model.train()
-    for i, (input, target) in enumerate(trn_loader):
+    for i, batch in enumerate(trn_loader):
         if args.short_epoch and (i > 10):
             break
         batch_num = i+1
         timer.batch_start()
-        scheduler.update_lr_mom(epoch, i+1, len(trn_loader))
-
+        scheduler.update_lr_mom(epoch, i+1, loader_len)
+        input, target = batch[0]['data'], batch[0]['label'].squeeze().long()
         # compute output
         output = model(input)
         loss = criterion(output, target)
@@ -243,7 +245,7 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
         top1.update(top1acc, batch_total)
         top5.update(top5acc, batch_total)
 
-        should_print = (batch_num % args.print_freq == 0) or (batch_num == len(trn_loader))
+        should_print = (batch_num % args.print_freq == 0) or (batch_num == loader_len)
         if args.local_rank == 0 and should_print:
             tb.log_memory()
             tb.log_trn_times(timer.batch_time.val, timer.data_time.val, input.size(0))
@@ -251,7 +253,7 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
 
             tb.log("sizes/batch_total", batch_total)
 
-            output = ('Epoch: [{}][{}/{}]\t'.format(epoch, batch_num, len(trn_loader)) +
+            output = ('Epoch: [{}][{}/{}]\t'.format(epoch, batch_num, loader_len) +
                       'Time {:.3f} ({:.3f})\t'.format(timer.batch_time.val, timer.batch_time.avg) +
                       'Loss {:.4f} ({:.4f})\t'.format(losses.val, losses.avg) +
                       'Acc@1 {:.3f} ({:.3f})\t'.format(top1.val, top1.avg) +
@@ -359,6 +361,8 @@ class DaliDataManager():
         if 'mom' in kwargs:
             del kwargs['mom']  # in case we mix schedule and data phases
         self.rect = kwargs.get('rect_val', False)
+        if self.rect:
+            del kwargs['rect_val']
         if sz == 128:
             val_bs = max(bs, 512)
         elif sz == 224:
@@ -416,9 +420,12 @@ class Scheduler():
 
     def get_lr_mom(self, epoch, batch_curr, batch_tot):
         phase = self.get_current_phase(epoch)
-        ep_start, ep_end = phase['ep']
-        ep_curr, ep_tot = epoch - ep_start, ep_end - ep_start
-        perc = (ep_curr * batch_tot + batch_curr) / (ep_tot * batch_tot)
+        if len(phase['ep']) == 1:
+            perc = 0
+        else:
+            ep_start, ep_end = phase['ep']
+            ep_curr, ep_tot = epoch - ep_start, ep_end - ep_start
+            perc = (ep_curr * batch_tot + batch_curr) / (ep_tot * batch_tot)
         if len(phase['lr']) == 1:
             new_lr = phase['lr'][0] # constant learning rate
         else:

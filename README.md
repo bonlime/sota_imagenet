@@ -3,8 +3,7 @@
 Values in brackets are what we need. Values before are metrics in the last batch
 * Resnet18: NoRect, 224:             Loss 0.3903 (1.2497)    Acc@1 92.188 (69.656)   Acc@5 97.656 (88.986)
 * Resnet18: Rect, 224:                Loss 1.5552 (1.2140)    Acc@1 61.719 (70.686)   Acc@5 85.156 (89.702)
-* Resnet18: Rect, 256:                Loss 1.1446 (1.2116)    Acc@1 73.438 (71.338)   Acc@5 92.969 (90.248)
-* DALI Mobilenetv2: NoRect, 224       Loss 1.0333 (1.1929)    Acc@1 73.828 (70.729)   Acc@5 90.625 (89.846) 
+* Resnet18: Rect, 256:                Loss 1.1446 (1.2116)    Acc@1 73.438 (71.338)   Acc@5 92.969 (90.248) 
 * Mobilenetv2: NoRect, 224            Loss 0.9992 (1.1483)    Acc@1 73.438 (71.704)   Acc@5 91.406 (90.360)
 * Mobilenetv2: Rect, 256              Loss 1.1397 (1.1010)    Acc@1 69.531 (73.464)   Acc@5 93.750 (91.686)
 
@@ -21,6 +20,13 @@ Exp2: increased bs to proper one + loss_scale=2048
 * SGDW - Fail
 * SGD + no_bn_wd - accuracy almost the same, but loss is lower (!)
 * PMSProp - Fail 
+
+Exp3:
+* Mobilenetv2 as in original paper, without any modifications for 90 epochs
+ 
+ python3 train.py --load-phases -a mobilenet_v2 -p 500 --opt_level=O2 --gpu=1 --logdir=logs/mbln2_rms-tmp --wd=4e-5  --optim=rmsprop --optim-param="{'alpha':0.9}" 
+
+
 
 
 Code to reproduce ImageNet in 18 minutes, by Andrew Shaw, Yaroslav Bulatov, and Jeremy Howard. High-level overview of techniques used is [here](http://fast.ai/2018/08/10/fastai-diu-imagenet/)
