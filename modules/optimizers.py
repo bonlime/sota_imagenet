@@ -117,10 +117,11 @@ class AdamW(Optimizer):
                 bias_correction2 = 1 - beta2 ** state['step']
                 step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1
 
-                p.data.addcdiv_(-step_size, exp_avg, denom)
-                
                 if group['weight_decay'] != 0:
                     p.data.mul_(1 - group['lr'] * group['weight_decay'])
+                    
+                p.data.addcdiv_(-step_size, exp_avg, denom)
+                
 
         return loss
 
@@ -214,9 +215,9 @@ class SGDW(Optimizer):
                       d_p = d_p.add(momentum, buf)
                   else:
                       d_p = buf
-              # Apply momentum
-              p.data.add_(-group['lr'], d_p)
               # Apply weight decay. THE ONLY DIFFERENCE IS HERE
               if group['weight_decay'] != 0:
                     p.data.mul_(1 - group['lr'] * group['weight_decay'])
+              # Apply momentum
+              p.data.add_(-group['lr'], d_p)
         return loss
