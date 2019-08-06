@@ -120,7 +120,7 @@ class AdamW(Optimizer):
                 p.data.addcdiv_(-step_size, exp_avg, denom)
                 
                 if group['weight_decay'] != 0:
-                    p.data.add_(-group['weight_decay'], p.data)
+                    p.data.mul_(1 - group['lr'] * group['weight_decay'])
 
         return loss
 
@@ -217,6 +217,6 @@ class SGDW(Optimizer):
               # Apply momentum
               p.data.add_(-group['lr'], d_p)
               # Apply weight decay. THE ONLY DIFFERENCE IS HERE
-              if weight_decay != 0:
-                  p.data.add_(-weight_decay, -p.data)
+              if group['weight_decay'] != 0:
+                    p.data.mul_(1 - group['lr'] * group['weight_decay'])
         return loss
