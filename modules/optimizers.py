@@ -43,7 +43,7 @@ class AdamW(Optimizer):
     """
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8,
-                 weight_decay=1e-2, amsgrad=False):
+                 weight_decay=0, amsgrad=False):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if not 0.0 <= eps:
@@ -63,6 +63,7 @@ class AdamW(Optimizer):
 
     def step(self, closure=None):
         """Performs a single optimization step.
+
         Arguments:
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
@@ -75,10 +76,6 @@ class AdamW(Optimizer):
             for p in group['params']:
                 if p.grad is None:
                     continue
-
-                # Perform stepweight decay
-                p.data.mul_(1 - group['lr'] * group['weight_decay'])
-
                 # Perform optimization step
                 grad = p.grad.data
                 if grad.is_sparse:
@@ -121,6 +118,9 @@ class AdamW(Optimizer):
                 step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1
 
                 p.data.addcdiv_(-step_size, exp_avg, denom)
+                
+                if group['weight_decay'] != 0:
+                    p.data.add_(-group['weight_decay'], p.data)
 
         return loss
 
@@ -163,24 +163,28 @@ class SGDW(Optimizer):
        https://arxiv.org/abs/1711.05101
     """
     def __init__(self, params, lr=required, momentum=0, dampening=0,
-                weight_decay=1e-2, nesterov=False):
+                weight_decay=0, nesterov=False):
         if lr is not required and lr < 0.0:
             raise ValueError("Invalid learning rate: {}".format(lr))
         if momentum < 0.0:
             raise ValueError("Invalid momentum value: {}".format(momentum))
         if weight_decay < 0.0:
             raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+
         defaults = dict(lr=lr, momentum=momentum, dampening=dampening,
                        weight_decay=weight_decay, nesterov=nesterov)
         if nesterov and (momentum <= 0 or dampening != 0):
             raise ValueError("Nesterov momentum requires a momentum and zero dampening")
         super(SGDW, self).__init__(params, defaults)
+
     def __setstate__(self, state):
         super(SGDW, self).__setstate__(state)
         for group in self.param_groups:
             group.setdefault('nesterov', False)
+            
     def step(self, closure=None):
         """Performs a single optimization step.
+
         Arguments:
            closure (callable, optional): A closure that reevaluates the model
                and returns the loss.
@@ -188,11 +192,13 @@ class SGDW(Optimizer):
         loss = None
         if closure is not None:
             loss = closure()
+
         for group in self.param_groups:
             weight_decay = group['weight_decay']
             momentum = group['momentum']
             dampening = group['dampening']
             nesterov = group['nesterov']
+
             for p in group['params']:
               if p.grad is None:
                   continue
@@ -210,7 +216,7 @@ class SGDW(Optimizer):
                       d_p = buf
               # Apply momentum
               p.data.add_(-group['lr'], d_p)
-              # Apply weight decay
+              # Apply weight decay. THE ONLY DIFFERENCE IS HERE
               if weight_decay != 0:
-                  p.data.add_(-group['lr'], weight_decay)
+                  p.data.add_(-weight_decay, -p.data)
         return loss

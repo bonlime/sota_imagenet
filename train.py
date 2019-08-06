@@ -95,7 +95,7 @@ def get_parser():
     add_arg('--optim-params', type=str, default='{}', help='Additional optimizer params as kwargs')
     return parser
 
-
+# makes it slightly faster
 cudnn.benchmark = True
 args = get_parser().parse_args()
 
@@ -110,6 +110,7 @@ is_rank0 = args.local_rank == 0
 name = args.name or str(datetime.now()).split('.')[0].replace(' ','_')
 OUTDIR = os.path.join(args.logdir, name)
 os.makedirs(OUTDIR, exist_ok=True)
+
 # save script and runing comand so we can reproduce from logs
 shutil.copy2(os.path.realpath(__file__), '{}'.format(OUTDIR))
 with open(OUTDIR + '/run.cmd', 'w') as fp:
