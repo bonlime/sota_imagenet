@@ -210,16 +210,14 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-    loader_len = trn_loader._size // trn_loader.batch_size
     # switch to train mode
     model.train()
-    for i, batch in enumerate(trn_loader):
+    for i, (input, target) in enumerate(trn_loader):
         if args.short_epoch and (i > 10):
             break
         batch_num = i+1
         timer.batch_start()
-        scheduler.update_lr_mom(epoch, i+1, loader_len)
-        input, target = batch[0]['data'], batch[0]['label'].squeeze().long()
+        scheduler.update_lr_mom(epoch, i+1, len(trn_loader))
         # compute output
         output = model(input)
         loss = criterion(output, target)
@@ -229,7 +227,10 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
         with amp.scale_loss(loss, optimizer) as scaled_loss:
             scaled_loss.backward()
         optimizer.step()
-
+        
+        # essential for DALI
+        torch.cuda.synchronize()
+        
         # Train batch done. Logging results
         timer.batch_end()
         corr1, corr5 = correct(output.data, target, topk=(1, 5))
@@ -245,7 +246,7 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
         top1.update(top1acc, batch_total)
         top5.update(top5acc, batch_total)
 
-        should_print = (batch_num % args.print_freq == 0) or (batch_num == loader_len)
+        should_print = (batch_num % args.print_freq == 0) or (batch_num == len(trn_loader))
         if args.local_rank == 0 and should_print:
             tb.log_memory()
             tb.log_trn_times(timer.batch_time.val, timer.data_time.val, input.size(0))
@@ -253,14 +254,14 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
 
             tb.log("sizes/batch_total", batch_total)
 
-            output = ('Epoch: [{}][{}/{}]\t'.format(epoch, batch_num, loader_len) +
+            output = ('Epoch: [{}][{}/{}]\t'.format(epoch, batch_num, len(trn_loader)) +
                       'Time {:.3f} ({:.3f})\t'.format(timer.batch_time.val, timer.batch_time.avg) +
                       'Loss {:.4f} ({:.4f})\t'.format(losses.val, losses.avg) +
                       'Acc@1 {:.3f} ({:.3f})\t'.format(top1.val, top1.avg) +
                       'Acc@5 {:.3f} ({:.3f})\t'.format(top5.val, top5.avg) +
                       'Data {:.3f} ({:.3f})\t'.format(timer.data_time.val, timer.data_time.avg))
             log.verbose(output)
-
+            
         tb.update_step_count(batch_total)
 
 
@@ -345,10 +346,6 @@ class DaliDataManager():
         cur_phase = self.get_phase(epoch)
         if cur_phase:
             self._set_data(cur_phase)
-        if not args.short_epoch:
-            self.trn_dl.reset()
-            if not self.rect:
-                self.val_dl.reset()
 
     def _set_data(self, phase):
         log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(phase["sz"], phase["bs"]))
@@ -473,8 +470,6 @@ def listify(p=None, q=None):
     return p
 
 # item() is a recent addition, so this helps with backward compatibility.
-
-
 def to_python_float(t):
     if isinstance(t, (float, int)):
         return t
@@ -514,16 +509,3 @@ def correct(output, target, topk=(1,)):
 
 if __name__ == '__main__':
     main()
-    # try:
-    #     with warnings.catch_warnings():
-    #         warnings.simplefilter("ignore", category=UserWarning)
-    #         main()
-    #     #if not args.skip_auto_shutdown: os.system(f'sudo shutdown -h -P +{args.auto_shutdown_success_delay_mins}')
-    # except Exception as e:
-    #     exc_type, exc_value, exc_traceback = sys.exc_info()
-    #     import traceback
-    #     traceback.print_tb(exc_traceback, file=sys.stdout)
-    #     log.event(e)
-    #     # in case of exception, wait 2 hours before shutting down
-    #     #if not args.skip_auto_shutdown: os.system(f'sudo shutdown -h -P +{args.auto_shutdown_failure_delay_mins}')
-    # tb.close()

@@ -7,8 +7,6 @@ from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 class HybridPipe(dali.pipeline.Pipeline):
     def __init__(self,
                  data_dir,
-                #  tfrec_filenames,
-                #  tfrec_idx_filenames,
                  sz,
                  bs,
                  num_threads,
@@ -16,22 +14,6 @@ class HybridPipe(dali.pipeline.Pipeline):
                  train):
 
         super(HybridPipe, self).__init__(bs, num_threads, device_id)
-        # self.input = dali.ops.TFRecordReader(
-        #     path=tfrec_filenames,
-        #     index_path=tfrec_idx_filenames,
-        #     random_shuffle=True,
-        #     initial_fill=10000,  # generate a lot of random numbers in advance
-        #     features={
-        #         'image/encoded': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-        #         'image/height': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
-        #         'image/width': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
-        #         'image/class/label': dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64,  -1),
-        #         'image/class/synset': dali.tfrecord.FixedLenFeature([], dali.tfrecord.string, ''),
-        #         'image/colorspace': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-        #         'image/channels': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
-        #         'image/format': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-        #         'image/filename': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, "")})
-        print(data_dir)
         self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=True)
 
         if train:
@@ -46,7 +28,7 @@ class HybridPipe(dali.pipeline.Pipeline):
                 device="mixed",
                 output_type=dali.types.RGB)
         # works much better with INTERP_TRIANGULAR 
-        self.resize = dali.ops.Resize(device='gpu', #interp_type=dali.types.INTERP_TRIANGULAR,
+        self.resize = dali.ops.Resize(device='gpu', interp_type=dali.types.INTERP_TRIANGULAR,
                                       resize_shorter=int(sz*1.14)) 
         self.normalize = dali.ops.CropMirrorNormalize(
             device="gpu",
@@ -62,9 +44,6 @@ class HybridPipe(dali.pipeline.Pipeline):
 
     def define_graph(self):
         # Read images and labels
-        # inputs = self.input(name="Reader")
-        # images = inputs["image/encoded"]
-        # labels = inputs["image/class/label"].gpu()
         images, labels = self.input(name="Reader")
         
         # Decode and augmentation
@@ -80,51 +59,31 @@ class HybridPipe(dali.pipeline.Pipeline):
 
 
 DATA_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/' 
-RECORDS_DIR = '/home/zakirov/datasets/imagenet_2012/'
-IDX_DIR = '/home/zakirov/datasets/imagenet_2012/record_idxs/'
 
+class DALIWrapper:
+    """Wrap dali to look like torch dataloader"""
+    def __init__(self, loader):
+        self.loader = loader
 
-# class DALIWrapper:
-#     """Wrap dali to look like torch dataloader"""
-#     def __init__(self, loader):
-#         self.loader = loader
+    def __len__(self):
+        return self.loader._size // self.loader.batch_size
 
-#     def __len__(self):
-#         return self.loader._size // self.loader.batch_size
-
-#     def __iter__(self):
-#         # -1 to remove background class if using tfrecords
-#         return ( (batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
-    
-#     def reset(self):
-#         self.loader.reset()
+    def __iter__(self):
+        return ( (batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
 def get_loader(sz, bs, workers, device_id, train):
-    if train:
-        tfrecord_f = os.path.join(RECORDS_DIR, 'train', 'train-{:05d}-of-01024')
-        idx_f = os.path.join(IDX_DIR, 'train', 'train-{:05d}-of-01024.idx')
-        filenames = [tfrecord_f.format(i) for i in range(1024)]
-        idx_filenames = [idx_f.format(i) for i in range(1024)]
-    else:
-        tfrecord_f = os.path.join(RECORDS_DIR, 'validation', 'validation-{:05d}-of-00128')
-        idx_f = os.path.join(IDX_DIR, 'validation', 'validation-{:05d}-of-00128.idx')
-        filenames = [tfrecord_f.format(i) for i in range(128)]
-        idx_filenames = [idx_f.format(i) for i in range(128)]
     if int(sz*1.14) <= 160:
         data_dir = DATA_DIR + '160/'
-    elif int(sz*1.14) <= 224:
-        data_dir = DATA_DIR + '224/'
     elif int(sz*1.14) <= 292:
         data_dir = DATA_DIR + '292/'
     else:
         data_dir = DATA_DIR
     data_dir = data_dir + 'train/' if train else data_dir + 'validation/'
+    print(data_dir)
     pipe = HybridPipe(
-        # tfrec_filenames=filenames,
-        # tfrec_idx_filenames=idx_filenames,
         data_dir=data_dir,
         sz=sz, bs=bs, num_threads=workers,
         device_id=device_id, train=train)
     pipe.build()
-    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader'))
-    return loader
+    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader'), auto_reset=True)
+    return DALIWrapper(loader)
