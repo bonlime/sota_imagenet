@@ -203,7 +203,7 @@ def main():
             phase = dm.get_phase(epoch)
             if phase:
                 save_checkpoint(epoch, model, best_top5, optimizer,
-                                filename='sz{}_checkpoint.path.tar'.format(phase["bs"]))
+                                filename='sz{}_checkpoint.path.tar'.format(phase["sz"]))
 
 
 def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
