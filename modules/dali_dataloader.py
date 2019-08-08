@@ -11,7 +11,8 @@ class HybridPipe(dali.pipeline.Pipeline):
                  bs,
                  num_threads,
                  device_id,
-                 train):
+                 train,
+                 min_area=0.1):
 
         super(HybridPipe, self).__init__(bs, num_threads, device_id)
         self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=True)
@@ -21,7 +22,7 @@ class HybridPipe(dali.pipeline.Pipeline):
                 device="mixed",
                 output_type=dali.types.RGB,
                 random_aspect_ratio=[0.8, 1.25],
-                random_area=[0.1, 1.0], # Maybe can make this value higher during last epochs
+                random_area=[min_area, 1.0],
                 num_attempts=100)
         else:
             self.decode = dali.ops.nvJPEGDecoder(
@@ -71,7 +72,7 @@ class DALIWrapper:
     def __iter__(self):
         return ( (batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
-def get_loader(sz, bs, workers, device_id, train):
+def get_loader(sz, bs, workers, device_id, train, min_area=0.1):
     if int(sz*1.14) <= 160:
         data_dir = DATA_DIR + '160/'
     elif int(sz*1.14) <= 292:
@@ -83,7 +84,7 @@ def get_loader(sz, bs, workers, device_id, train):
     pipe = HybridPipe(
         data_dir=data_dir,
         sz=sz, bs=bs, num_threads=workers,
-        device_id=device_id, train=train)
+        device_id=device_id, train=train, min_area=min_area)
     pipe.build()
     loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader'), auto_reset=True)
     return DALIWrapper(loader)

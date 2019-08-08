@@ -114,7 +114,7 @@ os.makedirs(OUTDIR, exist_ok=True)
 # save script and runing comand so we can reproduce from logs
 shutil.copy2(os.path.realpath(__file__), '{}'.format(OUTDIR))
 with open(OUTDIR + '/run.cmd', 'w') as fp:
-    fp.write(' '.join(sys.argv[1:]))
+    fp.write(' '.join(sys.argv[1:]) + '\n')
 PHASES = LOADED_PHASES if args.load_phases else eval(args.phases)
 with open(OUTDIR + '/phases.json','w') as fp:
     json.dump(PHASES, fp)
