@@ -1,4 +1,8 @@
 
+# TODO
+# Try no wd for bias
+# label smoothing. Changes the ideal output from +oo to something finite
+# Can be implemented as label smoothing + KLDivLoss. But need to check that it's the same as xent
 
 # # MobilenetV2 phases
 # LOADED_PHASES = [
@@ -8,8 +12,12 @@
 # for ep in range(1,110):
 #     LOADED_PHASES.append({'ep':ep, 'lr':0.045*0.99**ep})
 
-
+# FAILS WITH AUGMENTAION 
+# PROBABLY CAN REPEAT THIS ERROR BY SWITCHING DATA LOADER
 # Original phases for 1 machine
+# 91.46 in 14.12h 
+# The only modification was lr/2 instead of lr during the first stage. It's needed to avoid nan loss at the beginnning
+# Don't know why it didn't work 
 lr = 1.0
 bs = [512, 224, 128] # largest batch size that fits in memory for each image size
 bs_scale = [x/bs[0] for x in bs]
@@ -25,20 +33,6 @@ LOADED_PHASES = [
   {'ep':(33, 35), 'lr':lr/1000*bs_scale[2]},
 ]
 
-# lr = 1.0
-# scale_224 = 224 / 512
-# scale_288 = 128 / 512
-# one_machine = [
-#     {'ep': 0, 'sz': 128, 'bs': 512, 'trndir': '-sz/160'},
-#     {'ep': (0, 5), 'lr': (lr, lr * 2)},  # lr warmup is better with --init-bn0
-#     {'ep': 5, 'lr': lr},
-#     {'ep': 14, 'sz': 224, 'bs': 224,
-#      'lr': lr * scale_224},
-#     {'ep': 16, 'lr': lr / 10 * scale_224},
-#     {'ep': 27, 'lr': lr / 100 * scale_224},
-#     {'ep': 32, 'sz': 288, 'bs': 128, 'min_scale': 0.5, 'rect_val': True,
-#      'lr': lr / 100 * scale_288},
-#     {'ep': (33, 35), 'lr': lr / 1000 * scale_288}
 
 
 

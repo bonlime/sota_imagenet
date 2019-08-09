@@ -30,7 +30,10 @@ class HybridPipe(dali.pipeline.Pipeline):
                 output_type=dali.types.RGB)
         # works much better with INTERP_TRIANGULAR 
         self.resize = dali.ops.Resize(device='gpu', interp_type=dali.types.INTERP_TRIANGULAR,
-                                      resize_shorter=int(sz*1.14)) 
+                                      resize_shorter=int(sz*1.14))
+        
+        self.ctwist = dali.ops.ColorTwist(device = "gpu")
+        self.jitter = dali.ops.Jitter(device ="gpu")
         self.normalize = dali.ops.CropMirrorNormalize(
             device="gpu",
             output_dtype=dali.types.FLOAT,
@@ -39,8 +42,10 @@ class HybridPipe(dali.pipeline.Pipeline):
             mean=[0.485 * 255,0.456 * 255,0.406 * 255],
             std=[0.229 * 255,0.224 * 255,0.225 * 255],
             output_layout=dali.types.NCHW) 
-        self.mirror = dali.ops.CoinFlip()
-        self.uniform = dali.ops.Uniform(range=[0,1])
+        self.coin = dali.ops.CoinFlip()
+        self.rng1 = dali.ops.Uniform(range=[0,1])
+        self.rng2 = dali.ops.Uniform(range=[0.8,1.2])
+        self.rng3 = dali.ops.Uniform(range=[-0.5,0.5])
         self.train = train
 
     def define_graph(self):
@@ -51,8 +56,14 @@ class HybridPipe(dali.pipeline.Pipeline):
         images = self.decode(images)
         images = self.resize(images)
         if self.train:
-            images = self.normalize(images, mirror=self.mirror(), 
-                                    crop_pos_x=self.uniform(), crop_pos_y=self.uniform())
+            images = self.ctwist(images, 
+                                saturation=self.rng1(), 
+                                contrast=self.rng2(),
+                                brightness=self.rng2(),
+                                hue=self.rng3())
+            images = self.jitter(images, mask=self.coin())
+            images = self.normalize(images, mirror=self.coin(), 
+                                    crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
         else:
             images = self.normalize(images)
 
