@@ -18,14 +18,14 @@ class HybridPipe(dali.pipeline.Pipeline):
         self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=True)
 
         if train:
-            self.decode = dali.ops.nvJPEGDecoderRandomCrop(
+            self.decode = dali.ops.ImageDecoderRandomCrop(
                 device="mixed",
                 output_type=dali.types.RGB,
                 random_aspect_ratio=[0.8, 1.25],
                 random_area=[min_area, 1.0],
                 num_attempts=100)
         else:
-            self.decode = dali.ops.nvJPEGDecoder(
+            self.decode = dali.ops.ImageDecoder(
                 device="mixed",
                 output_type=dali.types.RGB)
         # works much better with INTERP_TRIANGULAR 
