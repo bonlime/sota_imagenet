@@ -15,7 +15,8 @@ class HybridPipe(dali.pipeline.Pipeline):
                  min_area=0.1):
 
         super(HybridPipe, self).__init__(bs, num_threads, device_id)
-        self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=True)
+        # only shuffle train data
+        self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=train)
 
         if train:
             self.decode = dali.ops.ImageDecoderRandomCrop(
@@ -84,12 +85,13 @@ class DALIWrapper:
         return ( (batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
 def get_loader(sz, bs, workers, device_id, train, min_area=0.1):
-    if int(sz*1.14) <= 160:
-        data_dir = DATA_DIR + '160/'
-    elif int(sz*1.14) <= 292:
-        data_dir = DATA_DIR + '292/'
-    else:
-        data_dir = DATA_DIR
+    # gives lower performance
+    #if int(sz*1.14) <= 160:
+    #    data_dir = DATA_DIR + '160/'
+    #elif int(sz*1.14) <= 292:
+    #    data_dir = DATA_DIR + '292/'
+    #else:
+    data_dir = DATA_DIR
     data_dir = data_dir + 'train/' if train else data_dir + 'validation/'
     print(data_dir)
     pipe = HybridPipe(

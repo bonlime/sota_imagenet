@@ -148,7 +148,7 @@ class DistRectSampler(Sampler):
         sampled_indices = self.indices[offset:offset+self.num_samples]
         # shufle offset idxs so that batch shape is random rather than increasing
         idxs = list(range(self.expected_num_batches))
-        np.random.shuffle(idxs)
+        #np.random.shuffle(idxs)
         for i in idxs:
             offset = i*self.batch_size
             yield sampled_indices[offset:offset+self.batch_size]

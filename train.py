@@ -90,7 +90,7 @@ def get_parser():
             help='Name of this run. If empty it would be a timestamp')
     add_arg('--short-epoch', action='store_true',
             help='make epochs short (for debugging)')
-    add_arg('--optim', type=str, default='SGD', choices=['sgd', 'sgdw', 'adam', 'adamw','rmsprop'], 
+    add_arg('--optim', type=str, default='SGD', choices=['sgd', 'sgdw', 'adam', 'adamw','rmsprop', 'radam'], 
             help='Optimizer to use (default: sgd)')
     add_arg('--optim-params', type=str, default='{}', help='Additional optimizer params as kwargs')
     return parser
@@ -159,9 +159,10 @@ def main():
 
     model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level, 
-                                      loss_scale=1 if args.opt_level== 'O0' else 2048,
+                                      loss_scale=1 if args.opt_level== 'O0' else 'dynamic',
                                       max_loss_scale=2.**13,
-                                      min_loss_scale=1.)
+                                      min_loss_scale=1.,
+                                      verbosity=0)
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
@@ -351,6 +352,11 @@ class DaliDataManager():
     def _set_data(self, phase):
         log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(phase["sz"], phase["bs"]))
         tb.log_size(phase['bs'], phase['sz'])
+        if getattr(self, 'trn_dl', None): 
+            # remove if exist. prevents DALI errors
+            del self.trn_dl
+            del self.val_dl
+            torch.cuda.empty_cache()
         self.trn_dl, self.val_dl = self._load_data(**phase)
 
     def _load_data(self, ep, sz, bs, **kwargs):
@@ -457,7 +463,8 @@ class Scheduler():
             param_group['momentum'] = mom
 
         tb.log("sizes/lr", lr)
-        tb.log("sizes/momentum", mom)
+        if mom:
+            tb.log("sizes/momentum", mom)
 
 
 def listify(p=None, q=None):
@@ -509,4 +516,5 @@ def correct(output, target, topk=(1,)):
 
 
 if __name__ == '__main__':
-    main()
+    res = main()
+    print("Acc@1 {:.3f} Acc@5 {:.3f}".format(res[0], res[1]))
