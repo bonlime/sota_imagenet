@@ -1,11 +1,13 @@
-# Evaluation results of pretrainde models:
+# Evaluation results of pretrainded models:
 ` python3 train.py -a resnet18 --phases="[{'ep':0,'sz':224,'bs':128, 'lr':0,'mom':0}]" --pretrained -e -p 100`
 Values in brackets are what we need. Values before are metrics in the last batch
-* Resnet18: NoRect, 224:             Loss 0.3903 (1.2497)    Acc@1 92.188 (69.656)   Acc@5 97.656 (88.986)
-* Resnet18: Rect, 224:                Loss 1.5552 (1.2140)    Acc@1 61.719 (70.686)   Acc@5 85.156 (89.702)
-* Resnet18: Rect, 256:                Loss 1.1446 (1.2116)    Acc@1 73.438 (71.338)   Acc@5 92.969 (90.248) 
-* Mobilenetv2: NoRect, 224            Loss 0.9992 (1.1483)    Acc@1 73.438 (71.704)   Acc@5 91.406 (90.360)
-* Mobilenetv2: Rect, 256              Loss 1.1397 (1.1010)    Acc@1 69.531 (73.464)   Acc@5 93.750 (91.686)
+* Resnet18: NoRect, 224:              Acc@1 69.743 Acc@5 88.993
+* Resnet18: Rect, 224:                Acc@1 70.718 Acc@5 89.742
+* Resnet18: Rect, 256:                Acc@1 71.338 Acc@5 90.248
+* Resnet50: NoRect, 224:              Acc@1 76.038 Acc@5 92.917
+* Resnet50: Rect, 256:                Acc@1 76.958 Acc@5 93.528
+* Mobilenetv2: NoRect, 224            Acc@1 71.801 Acc@5 90.394
+* Mobilenetv2: Rect, 224              Acc@1 72.886 Acc@5 91.142
 
 
 Exp1:
