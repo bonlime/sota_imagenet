@@ -55,7 +55,6 @@ class TensorboardLogger:
 
 import logging
 
-
 class FileLogger:
   def __init__(self, output_dir, is_master=False, is_rank0=False):
     self.output_dir = output_dir

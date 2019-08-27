@@ -62,7 +62,7 @@ class HybridPipe(dali.pipeline.Pipeline):
                                 contrast=self.rng2(),
                                 brightness=self.rng2(),
                                 hue=self.rng3())
-            images = self.jitter(images, mask=self.coin())
+            #images = self.jitter(images, mask=self.coin())
             images = self.normalize(images, mirror=self.coin(), 
                                     crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
         else:
