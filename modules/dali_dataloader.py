@@ -3,20 +3,21 @@ from nvidia import dali
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 
 
-
 class HybridPipe(dali.pipeline.Pipeline):
     def __init__(self,
                  data_dir,
                  sz,
                  bs,
                  num_threads,
-                 device_id,
                  train,
+                 local_rank,
+                 world_size,
                  min_area=0.1):
 
-        super(HybridPipe, self).__init__(bs, num_threads, device_id)
+        super(HybridPipe, self).__init__(bs, num_threads, local_rank)
         # only shuffle train data
-        self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=train)
+        self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=train, 
+                                        shard_id=local_rank, num_shards=world_size)
 
         if train:
             self.decode = dali.ops.ImageDecoderRandomCrop(
@@ -57,11 +58,11 @@ class HybridPipe(dali.pipeline.Pipeline):
         images = self.decode(images)
         images = self.resize(images)
         if self.train:
-            images = self.ctwist(images, 
-                                saturation=self.rng1(), 
-                                contrast=self.rng2(),
-                                brightness=self.rng2(),
-                                hue=self.rng3())
+            # images = self.ctwist(images, 
+            #                     saturation=self.rng1(), 
+            #                     contrast=self.rng2(),
+            #                     brightness=self.rng2(),
+            #                     hue=self.rng3())
             #images = self.jitter(images, mask=self.coin())
             images = self.normalize(images, mirror=self.coin(), 
                                     crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
@@ -71,8 +72,8 @@ class HybridPipe(dali.pipeline.Pipeline):
         return images, labels.gpu()
 
 
-DATA_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/' 
-
+#DATA_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/' 
+DATA_DIR = '/mnt/storage/datasets/ImageNet/raw-data/'
 class DALIWrapper:
     """Wrap dali to look like torch dataloader"""
     def __init__(self, loader):
@@ -82,22 +83,16 @@ class DALIWrapper:
         return self.loader._size // self.loader.batch_size
 
     def __iter__(self):
-        return ( (batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
+        return (( batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
-def get_loader(sz, bs, workers, device_id, train, min_area=0.1):
-    # gives lower performance
-    #if int(sz*1.14) <= 160:
-    #    data_dir = DATA_DIR + '160/'
-    #elif int(sz*1.14) <= 292:
-    #    data_dir = DATA_DIR + '292/'
-    #else:
+def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.1):
     data_dir = DATA_DIR
     data_dir = data_dir + 'train/' if train else data_dir + 'validation/'
     print(data_dir)
     pipe = HybridPipe(
         data_dir=data_dir,
-        sz=sz, bs=bs, num_threads=workers,
-        device_id=device_id, train=train, min_area=min_area)
+        sz=sz, bs=bs, num_threads=workers, train=train,
+        local_rank=local_rank, world_size=world_size, min_area=min_area)
     pipe.build()
-    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader'), auto_reset=True)
+    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader') / world_size, auto_reset=True)
     return DALIWrapper(loader)
