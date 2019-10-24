@@ -22,17 +22,21 @@ lr = 0.9
 bs = [512, 224, 128] # largest batch size that fits in memory for each image size
 bs_scale = [x/bs[0] for x in bs]
 LOADED_PHASES = [
-  {'ep':0,  'sz':128, 'bs':bs[0]},
-  {'ep':(0,1), 'lr': (0, lr), 'mom':0.9},
-  {'ep':(1,5),  'lr':(lr, lr*2)}, # lr warmup is better with --init-bn0
-  {'ep':5, 'lr':lr}, # trying one cycle
-  {'ep':14, 'sz':224, 'bs':bs[1], 'lr': lr*bs_scale[1]},
-  {'ep':16, 'lr':lr/10*bs_scale[1]},
-  {'ep':27, 'lr':lr/100*bs_scale[1]},
-  {'ep':32, 'sz':288, 'bs':bs[2], 'rect_val':True, 'min_area': 0.5},
-  {'ep':32, 'lr':lr/100*bs_scale[2]},
-  {'ep':(33, 35), 'lr':lr/1000*bs_scale[2]},
+  {'ep':0,  'sz':224, 'bs':bs[2]},
+  {'ep':(0,1), 'lr': (0, lr), 'mom':0.9}
 ]
+# LOADED_PHASES = [
+#   {'ep':0,  'sz':128, 'bs':bs[0]},
+#   {'ep':(0,1), 'lr': (0, lr), 'mom':0.9},
+#   {'ep':(1,5),  'lr':(lr, lr*2)}, # lr warmup is better with --init-bn0
+#   {'ep':5, 'lr':lr}, # trying one cycle
+#   {'ep':14, 'sz':224, 'bs':bs[1], 'lr': lr*bs_scale[1]},
+#   {'ep':16, 'lr':lr/10*bs_scale[1]},
+#   {'ep':27, 'lr':lr/100*bs_scale[1]},
+#   {'ep':32, 'sz':288, 'bs':bs[2], 'rect_val':True, 'min_area': 0.5},
+#   {'ep':32, 'lr':lr/100*bs_scale[2]},
+#   {'ep':(33, 35), 'lr':lr/1000*bs_scale[2]},
+# ]
 
 # phases for ADAM 
 # lr = 0.7*1e-2

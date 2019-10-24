@@ -2,15 +2,15 @@ import argparse
 import os
 import shutil
 import time
-import warnings
+# import warnings
 import math
 from datetime import datetime
-from pathlib import Path
+# from pathlib import Path
 import sys
-import os
-import math
+# import os
+# import math
 import collections
-import gc
+# import gc
 import json
 
 import torch
@@ -31,10 +31,12 @@ from modules import dali_dataloader
 from modules import experimental_utils
 from modules import dist_utils
 from modules.logger import TensorboardLogger, FileLogger
-from modules.meter import AverageMeter, TimeMeter
+# from modules.meter import AverageMeter, TimeMeter
+from pytorch_tools.utils.misc import AverageMeter, TimeMeter
 from modules.phases import LOADED_PHASES
 from modules.dataloader import fast_collate, create_dataset, BatchTransformDataLoader
-from modules.optimizers import optimizer_factory
+# from modules.optimizers import optimizer_factory
+from pytorch_tools.optim import optimizer_from_name as optimizer_factory
 
 
 def get_parser():
@@ -215,7 +217,7 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
     # switch to train mode
     model.train()
     for i, (input, target) in enumerate(trn_loader):
-        if args.short_epoch and (i > 10):
+        if args.short_epoch and (i > 500):
             break
         batch_num = i+1
         timer.batch_start()
@@ -244,9 +246,9 @@ def train(trn_loader, model, criterion, optimizer, scheduler, epoch):
         top1acc = to_python_float(corr1)*(100.0/batch_total)
         top5acc = to_python_float(corr5)*(100.0/batch_total)
 
-        losses.update(reduced_loss, batch_total)
-        top1.update(top1acc, batch_total)
-        top5.update(top5acc, batch_total)
+        losses.update(reduced_loss)
+        top1.update(top1acc)
+        top5.update(top5acc)
 
         should_print = (batch_num % args.print_freq == 0) or (batch_num == len(trn_loader))
         if args.local_rank == 0 and should_print:
@@ -292,9 +294,9 @@ def validate(val_loader, model, criterion, epoch, start_time):
             top1acc, top5acc = accuracy(output.data, target, topk=(1, 5))
         # Eval batch done. Logging results
         timer.batch_end()
-        losses.update(to_python_float(loss), to_python_float(batch_total))
-        top1.update(to_python_float(top1acc), to_python_float(batch_total))
-        top5.update(to_python_float(top5acc), to_python_float(batch_total))
+        losses.update(to_python_float(loss))
+        top1.update(to_python_float(top1acc))
+        top5.update(to_python_float(top5acc))
         should_print = (batch_num % args.print_freq == 0) or (batch_num == len(val_loader))
         if args.local_rank == 0 and should_print:
             output = ('Test:  [{}][{}/{}]\t'.format(epoch, batch_num, len(val_loader)) +
@@ -374,7 +376,7 @@ class DaliDataManager():
         else:
             val_bs = max(bs, 128)
         trn_loader = dali_dataloader.get_loader(sz=sz, bs=bs, workers=args.workers,
-                                                device_id=args.gpu, train=True, **kwargs)
+                                                train=True, **kwargs)
         # validation on rectangles requires another dataloader 
         if self.rect:
             val_dtst, val_sampler = create_dataset(VAL_DIR, val_bs, sz, True, args.distributed, train=False)
@@ -384,8 +386,8 @@ class DaliDataManager():
                 batch_sampler=val_sampler)
             val_loader = BatchTransformDataLoader(val_loader)
         else:
-            val_loader = dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers,
-                                                    device_id=args.gpu, train=False, **kwargs)
+            val_loader = dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers, 
+                                                    train=False, **kwargs)
         return trn_loader, val_loader
 
 # ### Learning rate scheduler
@@ -458,9 +460,9 @@ class Scheduler():
 
         self.current_lr = lr
         self.current_mom = mom
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
-            param_group['momentum'] = mom
+        # for param_group in self.optimizer.param_groups:
+        #     param_group['lr'] = lr
+        #     param_group['momentum'] = mom
 
         tb.log("sizes/lr", lr)
         if mom:

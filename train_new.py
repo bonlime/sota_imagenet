@@ -7,40 +7,44 @@ import math
 from datetime import datetime
 from pathlib import Path
 import sys
-import os
-import math
-import collections
-import gc
+# import os
+# import math
+# import collections
+# import gc
 import json
 
 import torch
-from torch.autograd import Variable
+# from torch.autograd import Variable
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
+# import torch.distributed as dist
 import torch.optim
-import torch.utils.data
-import torch.utils.data.distributed
+# import torch.utils.data
+# import torch.utils.data.distributed
 
-#import torchvision.models as models 
+# import torchvision.models as models
 import pytorch_tools.models as models
 import pytorch_tools as pt
 from pytorch_tools.fit_wrapper.callbacks import PhasesScheduler, Logger
-from pytorch_tools.utils.misc import AverageMeter, TimeMeter, listify
+from pytorch_tools.utils.misc import listify
 from pytorch_tools.optim import optimizer_from_name
 
 # for fp16
 from apex import amp
+from apex.parallel import DistributedDataParallel as DDP
 import copy
 
-from modules import dali_dataloader
-from modules import experimental_utils
-from modules import dist_utils
-from modules.logger import TensorboardLogger, FileLogger
-#from modules.meter import AverageMeter, TimeMeter
+from modules.dali_dataloader import get_loader
+from modules.experimental_utils import bnwd_optim_params
+# from modules import experimental_utils
+# from modules import dist_utils
+from modules.logger import FileLogger
+# from modules.meter import AverageMeter, TimeMeter
 from modules.phases import LOADED_PHASES
-from modules.dataloader import fast_collate, create_dataset, BatchTransformDataLoader
-#from modules.optimizers import optimizer_factory
+# from modules.dataloader import fast_collate, create_dataset, BatchTransformDataLoader
+# from modules.optimizers import optimizer_factory
+import ignite
+from ignite.contrib.handlers import ProgressBar
 
 
 def get_parser():
@@ -58,15 +62,15 @@ def get_parser():
             ' (default: resnet18)')
     add_arg('--pretrained', dest='pretrained', action='store_true',
             help='use pre-trained model')
-    add_arg('--gpu', type=int, default='0',
-            help='GPU to use')
+    # add_arg('--gpu', type=int, default='0',
+    #         help='GPU to use')
     add_arg('--phases', type=str,
             help='Specify epoch order of data resize and learning rate schedule: [{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]')
     add_arg('--load-phases', action='store_true',
-            help='Flag to load phases from modules.phases config'),
+            help='Flag to load phases from modules.phases config')
     # add_arg('--save-dir', type=str, default=Path.cwd(), help='Directory to save logs and models.')
-    add_arg('-j', '--workers', default=8, type=int, metavar='N',
-            help='number of data loading workers (default: 8)')
+    add_arg('-j', '--workers', default=4, type=int, metavar='N',
+            help='number of data loading workers (default: 4)')
     add_arg('--start-epoch', default=0, type=int, metavar='N',
             help='manual epoch number (useful on restarts)')
     add_arg('--weight-decay', '--wd', default=1e-4, type=float,
@@ -82,7 +86,7 @@ def get_parser():
             help='evaluate model on validation set')
     add_arg('--opt_level', default='O0', type=str, choices=['O0', 'O1', 'O2', 'O3'],
             help='optimizatin level for apex. (default: "00")')
-    add_arg('--distributed', action='store_true', help='Run distributed training. Default True')
+    # add_arg('--distributed', action='store_true', help='Run distributed training. Default True') #infer automaticaly
     # add_arg('--dist-url', default='env://', type=str,
     #                    help='url used to set up distributed training')
     # add_arg('--dist-backend', default='nccl', type=str, help='distributed backend')
@@ -96,24 +100,29 @@ def get_parser():
             help='Name of this run. If empty it would be a timestamp')
     add_arg('--short-epoch', action='store_true',
             help='make epochs short (for debugging)')
-    add_arg('--optim', type=str, default='SGD', choices=['sgd', 'sgdw', 'adam', 'adamw','rmsprop', 'radam'], 
+    add_arg('--optim', type=str, default='SGD', choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
             help='Optimizer to use (default: sgd)')
     add_arg('--optim-params', type=str, default='{}', help='Additional optimizer params as kwargs')
     return parser
+
 
 # makes it slightly faster
 cudnn.benchmark = True
 args = get_parser().parse_args()
 
-# set gpu
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(args.gpu)
-torch.cuda.set_device(args.gpu)
+# # set gpu
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(args.gpu)
+# torch.cuda.set_device(args.gpu)
+
+# detect distributed
+args.world_size = int(os.environ.get('WORLD_SIZE', 1))
+args.distributed = args.world_size > 1
 
 # Only want master rank logging to tensorboard
-is_master = (not args.distributed) or (dist_utils.env_rank() == 0)
-is_rank0 = args.local_rank == 0
-name = args.name or str(datetime.now()).split('.')[0].replace(' ','_')
+# is_master = (not args.distributed) or (args.local_rank == 0) #(dist_utils.env_rank() == 0)
+IS_MASTER = args.local_rank == 0
+name = args.name or str(datetime.now()).split('.')[0].replace(' ', '_')
 OUTDIR = os.path.join(args.logdir, name)
 os.makedirs(OUTDIR, exist_ok=True)
 
@@ -122,16 +131,16 @@ shutil.copy2(os.path.realpath(__file__), '{}'.format(OUTDIR))
 with open(OUTDIR + '/run.cmd', 'w') as fp:
     fp.write(' '.join(sys.argv[1:]) + '\n')
 PHASES = LOADED_PHASES if args.load_phases else eval(args.phases)
-with open(OUTDIR + '/phases.json','w') as fp:
+with open(OUTDIR + '/phases.json', 'w') as fp:
     json.dump(PHASES, fp)
-tb = TensorboardLogger(OUTDIR, is_master=is_master)
-log = FileLogger(OUTDIR, is_master=is_master, is_rank0=is_rank0)
+# tb = TensorboardLogger(OUTDIR, is_master=is_master)
+log = FileLogger(OUTDIR, is_master=IS_MASTER)
 
 
 def main():
-    os.system('shutdown -c')  # cancel previous shutdown command
+    # os.system('shutdown -c')  # cancel previous shutdown command
     log.console(args)
-    #tb.log('sizes/world', dist_utils.env_world_size())
+    # tb.log('sizes/world', dist_utils.env_world_size())
 
     if args.distributed:
         log.console('Distributed initializing process group')
@@ -152,10 +161,10 @@ def main():
 
     if args.distributed:
         raise NotImplementedError
-        model = dist_utils.DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
+        model = DDP(model, delay_allreduce=True)  # device_ids=[args.local_rank], output_device=args.local_rank)
 
-    best_top5 = 87 #93  # only save models over 93%. Otherwise it stops to save every time
-    optim_params = experimental_utils.bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
+    # best_top5 = 87 #93  # only save models over 93%. Otherwise it stops to save every time
+    optim_params = bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -164,11 +173,11 @@ def main():
     optimizer = optimizer_from_name(args.optim)(optim_params, lr=0, weight_decay=args.weight_decay, **kwargs)
 
     model, optimizer = amp.initialize(model, optimizer,
-                                      opt_level=args.opt_level, 
-                                      loss_scale=1 if args.opt_level== 'O0' else 'dynamic',
+                                      opt_level=args.opt_level,
+                                      loss_scale=1 if args.opt_level == 'O0' else 'dynamic',
                                       max_loss_scale=2.**13,
                                       min_loss_scale=1.,
-                                      verbosity=0)
+                                      verbosity=1)
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
@@ -180,33 +189,40 @@ def main():
     # log.console("Creating data loaders (this could take up to 10 minutes if volume needs to be warmed up)")
     # data phases are parsed from start and shedule phases are parsed from the end
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
-    dm = DaliDataManager(PHASES) # + args.start_epoch here
-    runner = pt.fit_wrapper.Runner(model)
-    runner.compile(optimizer, criterion, 
-                   metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)], 
-                   callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
-                             Logger(OUTDIR, logger=log.logger)])
+    dm = DaliDataManager(PHASES)  # + args.start_epoch here
+    runner = ignite.engine.create_supervised_trainer(model, optimizer, criterion)
+    dm.set_stage(0)
+    pbar = ProgressBar()
+    pbar.attach(runner)
+    print('start train')
+    runner.run(dm.trn_dl)
+    print('end train')
+    # runner = pt.fit_wrapper.Runner(model, optimizer, criterion, verbose=IS_MASTER,
+    #                                metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
+    #                                callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
+    #                                           Logger(OUTDIR, logger=log.logger)])
 
-    start_time = datetime.now()  # Loading start to after everything is loaded
-    if args.evaluate:
-        dm.set_stage(0)
-        return runner.evaluate(dm.val_dl)
-        #return validate(dm.val_dl, model, criterion, 0, start_time)
+    start_time=datetime.now()  # Loading start to after everything is loaded
+    # if args.evaluate:
+    #     dm.set_stage(0)
+    #     return runner.evaluate(dm.val_dl)
+    #     # return validate(dm.val_dl, model, criterion, 0, start_time)
 
-    if args.distributed:
-        log.console('Syncing machines before training')
-        dist_utils.sum_tensor(torch.tensor([1.0]).float().cuda())
+    # if args.distributed:
+    #     log.console('Syncing machines before training')
+    #     dist_utils.sum_tensor(torch.tensor([1.0]).float().cuda())
 
-    for idx in range(len(dm.stages)):
-        dm.set_stage(idx)
-        runner.fit(dm.trn_dl, 
-                   steps_per_epoch=(None, 10)[args.short_epoch],
-                   val_loader=dm.val_dl,
-                   val_steps=(None, 10)[args.short_epoch],
-                   epochs=dm.stage_len + dm.stages[idx]['ep'],
-                   start_epoch=dm.stages[idx]['ep'])
-    return runner.loss_meter.avg, [m.avg for m in runner.metric_meters]
-    #log.event("~~epoch\thours\ttop1\ttop5\n")
+    # for idx in range(len(dm.stages)):
+    #     dm.set_stage(idx)
+    #     runner.run(dm.trn_dl)
+        # runner.fit(dm.trn_dl,
+        #            steps_per_epoch=(None, 100)[args.short_epoch],
+        #            val_loader=dm.val_dl,
+        #            val_steps=(None, 10)[args.short_epoch],
+        #            epochs=dm.stage_len + dm.stages[idx]['ep'],
+        #            start_epoch=dm.stages[idx]['ep'])
+    # return runner._loss_meter.avg, [m.avg for m in runner._metric_meters]
+    # log.event("~~epoch\thours\ttop1\ttop5\n")
     # for epoch in range(args.start_epoch, scheduler.tot_epochs):
     #     dm.set_epoch(epoch)
 
@@ -248,10 +264,10 @@ def main():
 #         with amp.scale_loss(loss, optimizer) as scaled_loss:
 #             scaled_loss.backward()
 #         optimizer.step()
-        
+
 #         # essential for DALI
 #         torch.cuda.synchronize()
-        
+
 #         # Train batch done. Logging results
 #         timer.batch_end()
 #         corr1, corr5 = correct(output.data, target, topk=(1, 5))
@@ -282,7 +298,7 @@ def main():
 #                       'Acc@5 {:.3f} ({:.3f})\t'.format(top5.val, top5.avg) +
 #                       'Data {:.3f} ({:.3f})\t'.format(timer.data_time.val, timer.data_time.avg))
 #             log.verbose(output)
-            
+
 #         tb.update_step_count(batch_total)
 
 
@@ -331,81 +347,79 @@ def main():
 
 def distributed_predict(input, target, model, criterion):
     # Allows distributed prediction on uneven batches. Test set isn't always large enough for every GPU to get a batch
-    batch_size = input.size(0)
-    output = loss = corr1 = corr5 = valid_batches = 0
+    batch_size=input.size(0)
+    output=loss=corr1=corr5=valid_batches=0
 
     if batch_size:
         with torch.no_grad():
-            output = model(input)
-            loss = criterion(output, target).data
+            output=model(input)
+            loss=criterion(output, target).data
         # measure accuracy and record loss
-        valid_batches = 1
-        corr1, corr5 = correct(output.data, target, topk=(1, 5))
+        valid_batches=1
+        corr1, corr5=correct(output.data, target, topk=(1, 5))
 
-    metrics = torch.tensor([batch_size, valid_batches, loss, corr1, corr5]).float().cuda()
-    batch_total, valid_batches, reduced_loss, corr1, corr5 = dist_utils.sum_tensor(metrics).cpu().numpy()
-    reduced_loss = reduced_loss/valid_batches
+    metrics=torch.tensor([batch_size, valid_batches, loss, corr1, corr5]).float().cuda()
+    batch_total, valid_batches, reduced_loss, corr1, corr5=dist_utils.sum_tensor(metrics).cpu().numpy()
+    reduced_loss=reduced_loss/valid_batches
 
-    top1 = corr1*(100.0/batch_total)
-    top5 = corr5*(100.0/batch_total)
+    top1=corr1*(100.0/batch_total)
+    top5=corr5*(100.0/batch_total)
     return top1, top5, reduced_loss, batch_total
 
 
-VAL_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/validation'
+VAL_DIR='/home/zakirov/datasets/imagenet_2012/raw_data/validation'
 
 class DaliDataManager():
     """Almost the same as DataManager but lazy and only gets dataloaders when asked"""
 
     def __init__(self, phases):
-        self.stages = [copy.deepcopy(p) for p in phases if 'bs' in p]
-        eps = [listify(p['ep']) for p in phases]
-        self.tot_epochs = max([max(ep) for ep in eps])
+        self.stages=[copy.deepcopy(p) for p in phases if 'bs' in p]
+        eps=[listify(p['ep']) for p in phases]
+        self.tot_epochs=max([max(ep) for ep in eps])
 
     def set_stage(self, idx):
-        stage = self.stages[idx]
+        stage=self.stages[idx]
         self._set_data(stage)
         if (idx+1) < len(self.stages):
-            self.stage_len = self.stages[idx+1]['ep'] - stage['ep']
+            self.stage_len=self.stages[idx+1]['ep'] - stage['ep']
         else:
-            self.stage_len = self.tot_epochs - stage['ep']
+            self.stage_len=self.tot_epochs - stage['ep']
 
     def _set_data(self, phase):
         log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(phase["sz"], phase["bs"]))
-        tb.log_size(phase['bs'], phase['sz'])
-        if getattr(self, 'trn_dl', None): 
+        #tb.log_size(phase['bs'], phase['sz'])
+        if getattr(self, 'trn_dl', None):
             # remove if exist. prevents DALI errors
             del self.trn_dl
             del self.val_dl
             torch.cuda.empty_cache()
-        self.trn_dl, self.val_dl = self._load_data(**phase)
+        self.trn_dl, self.val_dl=self._load_data(**phase)
 
     def _load_data(self, ep, sz, bs, **kwargs):
         if 'lr' in kwargs:
             del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs:
             del kwargs['mom']  # in case we mix schedule and data phases
-        self.rect = kwargs.get('rect_val', False)
+        self.rect=kwargs.get('rect_val', False)
         if self.rect:
             del kwargs['rect_val']
         if sz == 128:
-            val_bs = max(bs, 512)
+            val_bs=max(bs, 512)
         elif sz == 224:
-            val_bs = max(bs, 256)
+            val_bs=max(bs, 256)
         else:
-            val_bs = max(bs, 128)
-        trn_loader = dali_dataloader.get_loader(sz=sz, bs=bs, workers=args.workers,
-                                                device_id=args.gpu, train=True, **kwargs)
-        # validation on rectangles requires another dataloader 
+            val_bs=max(bs, 128)
+        trn_loader=get_loader(sz=sz, bs=bs, workers=args.workers, train=True, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
+        # validation on rectangles requires another dataloader
         if self.rect:
-            val_dtst, val_sampler = create_dataset(VAL_DIR, val_bs, sz, True, args.distributed, train=False)
-            val_loader = torch.utils.data.DataLoader(
+            val_dtst, val_sampler=create_dataset(VAL_DIR, val_bs, sz, True, args.distributed, train=False)
+            val_loader=torch.utils.data.DataLoader(
                 val_dtst,
                 num_workers=args.workers, pin_memory=True, collate_fn=fast_collate,
                 batch_sampler=val_sampler)
-            val_loader = BatchTransformDataLoader(val_loader)
+            val_loader=BatchTransformDataLoader(val_loader)
         else:
-            val_loader = dali_dataloader.get_loader(sz=sz, bs=val_bs, workers=args.workers,
-                                                    device_id=args.gpu, train=False, **kwargs)
+            val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, train=False, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
         return trn_loader, val_loader
 
 
@@ -426,7 +440,7 @@ class DaliDataManager():
 #     def _set_data(self, phase):
 #         log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(phase["sz"], phase["bs"]))
 #         tb.log_size(phase['bs'], phase['sz'])
-#         if getattr(self, 'trn_dl', None): 
+#         if getattr(self, 'trn_dl', None):
 #             # remove if exist. prevents DALI errors
 #             del self.trn_dl
 #             del self.val_dl
@@ -449,7 +463,7 @@ class DaliDataManager():
 #             val_bs = max(bs, 128)
 #         trn_loader = dali_dataloader.get_loader(sz=sz, bs=bs, workers=args.workers,
 #                                                 device_id=args.gpu, train=True, **kwargs)
-#         # validation on rectangles requires another dataloader 
+#         # validation on rectangles requires another dataloader
 #         if self.rect:
 #             val_dtst, val_sampler = create_dataset(VAL_DIR, val_bs, sz, True, args.distributed, train=False)
 #             val_loader = torch.utils.data.DataLoader(
@@ -478,7 +492,7 @@ class DaliDataManager():
 #         phase['lr'] = listify(phase['lr'])
 #         phase['mom'] = listify(phase.get('mom', None)) # optional
 #         if len(phase['lr']) == 2 or len(phase['mom']) == 2:
-#             phase['mode'] = phase.get('mode', 'linear') # optional 
+#             phase['mode'] = phase.get('mode', 'linear') # optional
 #             assert (len(phase['ep']) == 2), 'Linear learning rates must contain end epoch'
 #         return phase
 
@@ -509,7 +523,7 @@ class DaliDataManager():
 #         else:
 #             lr_start, lr_end = phase['lr']
 #             new_lr = self._schedule(lr_start, lr_end, perc, phase['mode'])
-            
+
 #         if len(phase['mom']) == 0:
 #             new_mom = self.current_mom
 #         elif len(phase['mom']) == 1:
@@ -590,5 +604,5 @@ def to_python_float(t):
 
 
 if __name__ == '__main__':
-    _, res = main()
+    _, res=main()
     print("Acc@1 {:.3f} Acc@5 {:.3f}".format(res[0], res[1]))
