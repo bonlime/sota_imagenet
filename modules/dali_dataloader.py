@@ -12,7 +12,8 @@ class HybridPipe(dali.pipeline.Pipeline):
                  train,
                  local_rank,
                  world_size,
-                 min_area=0.1):
+                 min_area=0.1,
+                 dali_cpu=True):
 
         super(HybridPipe, self).__init__(bs, num_threads, local_rank)
         # only shuffle train data
@@ -21,7 +22,7 @@ class HybridPipe(dali.pipeline.Pipeline):
 
         if train:
             self.decode = dali.ops.ImageDecoderRandomCrop(
-                device="mixed",
+                device="cpu" if dali_cpu else 'mixed',
                 output_type=dali.types.RGB,
                 random_aspect_ratio=[0.8, 1.25],
                 random_area=[min_area, 1.0],
@@ -31,7 +32,8 @@ class HybridPipe(dali.pipeline.Pipeline):
                 device="mixed",
                 output_type=dali.types.RGB)
         # works much better with INTERP_TRIANGULAR 
-        self.resize = dali.ops.Resize(device='gpu', interp_type=dali.types.INTERP_TRIANGULAR,
+        self.resize = dali.ops.Resize(device='cpu' if dali_cpu and train else 'gpu', 
+                                      interp_type=dali.types.INTERP_TRIANGULAR,
                                       resize_shorter=int(sz*1.14))
         
         self.ctwist = dali.ops.ColorTwist(device = "gpu")
@@ -49,6 +51,7 @@ class HybridPipe(dali.pipeline.Pipeline):
         self.rng2 = dali.ops.Uniform(range=[0.8,1.2])
         self.rng3 = dali.ops.Uniform(range=[-0.5,0.5])
         self.train = train
+        self.dali_cpu = dali_cpu
 
     def define_graph(self):
         # Read images and labels
@@ -57,6 +60,8 @@ class HybridPipe(dali.pipeline.Pipeline):
         # Decode and augmentation
         images = self.decode(images)
         images = self.resize(images)
+        if self.dali_cpu:
+            images = images.gpu()
         if self.train:
             # images = self.ctwist(images, 
             #                     saturation=self.rng1(), 
