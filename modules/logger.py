@@ -56,12 +56,14 @@ class TensorboardLogger:
 import logging
 
 class FileLogger:
-  def __init__(self, output_dir, is_master=False, is_rank0=False):
+  def __init__(self, output_dir, is_master=False):
     self.output_dir = output_dir
 
     # Log to console if rank 0, Log to console and file if master
-    if not is_rank0: self.logger = NoOp()
-    else: self.logger = self.get_logger(output_dir, log_to_file=is_master)
+    if is_master:
+      self.logger = self.get_logger(output_dir)
+    else:
+      self.logger = NoOp()
 
   def get_logger(self, output_dir, log_to_file=True):
     logger = logging.getLogger('imagenet_training')

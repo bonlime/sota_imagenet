@@ -21,7 +21,7 @@ class DDP(DistributedDataParallel):
 def reduce_tensor(tensor): return sum_tensor(tensor)/env_world_size()
 def sum_tensor(tensor):
   rt = tensor.clone()
-  dist.all_reduce(rt, op=dist.reduce_op.SUM)
+  dist.all_reduce(rt, op=dist.ReduceOp.SUM)
   return rt
 
 def env_world_size(): return int(os.environ['WORLD_SIZE'])

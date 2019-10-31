@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torch.optim
+import torch.distributed as dist
 
 import pytorch_tools.models as models
 import pytorch_tools as pt
@@ -25,6 +26,7 @@ from apex import amp
 from apex.parallel import DistributedDataParallel as DDP
 import copy
 
+import modules.dist_utils as dist_utils
 from modules.dali_dataloader import get_loader
 from modules.experimental_utils import bnwd_optim_params
 from modules.logger import FileLogger
@@ -94,11 +96,6 @@ def get_parser():
 cudnn.benchmark = True
 args = get_parser().parse_args()
 
-# # set gpu
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(args.gpu)
-# torch.cuda.set_device(args.gpu)
-
 # detect distributed
 args.world_size = int(os.environ.get('WORLD_SIZE', 1))
 args.distributed = args.world_size > 1
@@ -107,16 +104,17 @@ args.distributed = args.world_size > 1
 # is_master = (not args.distributed) or (args.local_rank == 0) #(dist_utils.env_rank() == 0)
 IS_MASTER = args.local_rank == 0
 name = args.name or str(datetime.now()).split('.')[0].replace(' ', '_')
-OUTDIR = os.path.join(args.logdir, name)
-os.makedirs(OUTDIR, exist_ok=True)
 
 # save script and runing comand so we can reproduce from logs
+OUTDIR = os.path.join(args.logdir, name)
+os.makedirs(OUTDIR, exist_ok=True)
 shutil.copy2(os.path.realpath(__file__), '{}'.format(OUTDIR))
 with open(OUTDIR + '/run.cmd', 'w') as fp:
     fp.write(' '.join(sys.argv[1:]) + '\n')
 PHASES = LOADED_PHASES if args.load_phases else eval(args.phases)
 with open(OUTDIR + '/phases.json', 'w') as fp:
     json.dump(PHASES, fp)
+print(IS_MASTER)
 log = FileLogger(OUTDIR, is_master=IS_MASTER)
 
 
@@ -126,10 +124,10 @@ def main():
     if args.distributed:
         log.console('Distributed initializing process group')
         torch.cuda.set_device(args.local_rank)
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=dist_utils.env_world_size())
-        assert(dist_utils.env_world_size() == dist.get_world_size())
-        log.console("Distributed: success (%d/%d)" % (args.local_rank, dist.get_world_size()))
+        dist.init_process_group(backend='nccl', init_method='env://',
+                                world_size=args.world_size)
+        # assert(dist_utils.env_world_size() == dist.get_world_size())
+        # log.console("Distributed: success (%d/%d)" % (args.local_rank, dist.get_world_size()))
 
     log.console("Loading model")
     if args.pretrained:
@@ -139,10 +137,6 @@ def main():
         print("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
     model = model.cuda()
-
-    if args.distributed:
-        raise NotImplementedError
-        model = DDP(model, delay_allreduce=True)  # device_ids=[args.local_rank], output_device=args.local_rank)
 
     # best_top5 = 93  # only save models over 93%. Otherwise it stops to save every time
     optim_params = bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
@@ -155,11 +149,14 @@ def main():
 
     model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
-                                      loss_scale=1 if args.opt_level == 'O0' else 'dynamic',
+                                      loss_scale=1 if args.opt_level == 'O0' else 2048,
                                       max_loss_scale=2.**13,
                                       min_loss_scale=1.,
                                       verbosity=1)
 
+    if args.distributed:
+        model = DDP(model, delay_allreduce=True)  # device_ids=[args.local_rank], output_device=args.local_rank)
+    
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
         model.load_state_dict(checkpoint['state_dict'])
@@ -172,18 +169,15 @@ def main():
     dm = DaliDataManager(PHASES)  # + args.start_epoch here
 
     start_time=datetime.now()  # Loading start to after everything is loaded
-    if args.evaluate:
-        dm.set_stage(0)
-        return runner.evaluate(dm.val_dl)
-
-    if args.distributed:
-        log.console('Syncing machines before training')
-        dist_utils.sum_tensor(torch.tensor([1.0]).float().cuda())
 
     runner = pt.fit_wrapper.Runner(model, optimizer, criterion, verbose=IS_MASTER,
                                    metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
                                    callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
                                               Logger(OUTDIR, logger=log.logger)])
+    if args.evaluate:
+        dm.set_stage(0)
+        return runner.evaluate(dm.val_dl)
+
     for idx in range(len(dm.stages)):
         dm.set_stage(idx)
         runner.fit(dm.trn_dl,
@@ -215,9 +209,6 @@ def distributed_predict(input, target, model, criterion):
     top1=corr1*(100.0/batch_total)
     top5=corr5*(100.0/batch_total)
     return top1, top5, reduced_loss, batch_total
-
-
-VAL_DIR='/home/zakirov/datasets/imagenet_2012/raw_data/validation'
 
 class DaliDataManager():
     """Almost the same as DataManager but lazy and only gets dataloaders when asked"""
@@ -266,4 +257,11 @@ class DaliDataManager():
 
 if __name__ == '__main__':
     _, res=main()
-    print("Acc@1 {:.3f} Acc@5 {:.3f}".format(res[0], res[1]))
+    acc1, acc5 = res[0], res[1]
+    # need to calculate mean of val metrics between processes, because each validated on different images
+    if args.distributed:
+        print('Distributed')
+        metrics = torch.tensor([acc1, acc5]).float().cuda()
+        acc1, acc5 = dist_utils.sum_tensor(metrics).cpu().numpy() / args.world_size
+    print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(args.local_rank, res[0], res[1]))
+    print("Acc@1 {:.3f} Acc@5 {:.3f}".format(acc1, acc5))
