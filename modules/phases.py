@@ -22,8 +22,10 @@ lr = 0.9
 bs = [512, 224, 128] # largest batch size that fits in memory for each image size
 bs_scale = [x/bs[0] for x in bs]
 LOADED_PHASES = [
-  {'ep':0,  'sz':224, 'bs':bs[2]},
-  {'ep':(0,1), 'lr': (0, lr), 'mom':0.9}
+  {'ep':0,  'sz':128, 'bs':bs[0]},
+  {'ep':0, 'lr': lr/10, 'mom':0.9},
+  {'ep':1,  'sz':224, 'bs':bs[2]},
+  #{'ep':1, 'lr': lr/10, 'mom':0.9}
 ]
 # LOADED_PHASES = [
 #   {'ep':0,  'sz':128, 'bs':bs[0]},
