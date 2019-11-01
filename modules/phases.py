@@ -18,15 +18,15 @@
 # 91.46 in 14.12h 
 # The only modification was lr/2 instead of lr during the first stage. It's needed to avoid nan loss at the beginnning
 # Don't know why it didn't work 
-lr = 0.9
-bs = [512, 224, 128] # largest batch size that fits in memory for each image size
-bs_scale = [x/bs[0] for x in bs]
-LOADED_PHASES = [
-  {'ep':0,  'sz':128, 'bs':bs[0]},
-  {'ep':0, 'lr': lr/10, 'mom':0.9},
-  {'ep':1,  'sz':224, 'bs':bs[2]},
+# lr = 0.9
+# bs = [512, 224, 128] # largest batch size that fits in memory for each image size
+# bs_scale = [x/bs[0] for x in bs]
+# LOADED_PHASES = [
+#   {'ep':0,  'sz':128, 'bs':bs[0]},
+#   {'ep':0, 'lr': lr/10, 'mom':0.9},
+#   {'ep':1,  'sz':224, 'bs':bs[2]},
   #{'ep':1, 'lr': lr/10, 'mom':0.9}
-]
+# ]
 # LOADED_PHASES = [
 #   {'ep':0,  'sz':128, 'bs':bs[0]},
 #   {'ep':(0,1), 'lr': (0, lr), 'mom':0.9},
@@ -94,9 +94,26 @@ LOADED_PHASES = [
 #   {'ep':(33, 34), 'lr':(lr/25*bs_scale[2], lr/125*bs_scale[2])},
 # ]
 
+# 1.11.19
+lr = 0.9
+bs = [512, 224, 128] # largest batch size that fits in memory for each image size
+bs_scale = [x/bs[0] for x in bs]
+LOADED_PHASES = [
+  {'ep':0,  'sz':128, 'bs':bs[0]},
+  {'ep':(0,2), 'lr': (lr/50, lr/2), 'mom':0.9},
+  {'ep':(2,10),  'lr':(lr/2,lr*2), 'mode':'cos'}, # lr warmup is better with --init-bn0
+  {'ep':(10,26), 'lr':(lr*2,lr/2), 'mode':'cos'}, # trying one cycle
+  {'ep':26, 'sz':192, 'bs':bs[1]},
+  {'ep':(26, 34), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
+  {'ep':34, 'sz':224, 'bs':bs[2]},
+  {'ep':(34, 40), 'lr':(lr/10*bs_scale[2], lr/200*bs_scale[2])},
+  #{'ep':28, 'sz':256, 'bs':bs[2]}, 
+  #{'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
+]
 
 # 91.5% in 9.62h
 # droped lr too early, could continue training on 128 till convergence
+# 1.11.19: 91.39 in 2.65h on 4 V100
 # lr = 0.9
 # bs = [512, 224, 128] # largest batch size that fits in memory for each image size
 # bs_scale = [x/bs[0] for x in bs]
@@ -107,14 +124,16 @@ LOADED_PHASES = [
 #   {'ep':20, 'sz':192, 'bs':bs[1]},
 #   {'ep':(20, 24), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
 #   {'ep':24, 'sz':224, 'bs':bs[2]},
-#   {'ep':(24, 28), 'lr':(lr/10*bs_scale[2], lr/100*bs_scale[2])},
-#   {'ep':28, 'sz':256, 'bs':bs[2], 'rect_val':True}, 
-#   {'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
+#   {'ep':(24, 32), 'lr':(lr/10*bs_scale[2], lr/100*bs_scale[2])},
+  #{'ep':28, 'sz':256, 'bs':bs[2]}, 
+  #{'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
 # ]
 
 
-# bs = [512, 224, 128]
 # INITIAL Phases. not enough for convergence
+# lr = 0.9
+# bs = [512, 224, 128]
+# bs_scale = [x/bs[0] for x in bs]
 # LOADED_PHASES = [
 #   {'ep':0,  'sz':128, 'bs':bs[0]},
 #   {'ep':(0,7),  'lr':(lr,lr*2), 'mom':(0.9, 0.8), 'mode':'cos'}, # lr warmup is better with --init-bn0
