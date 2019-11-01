@@ -78,7 +78,8 @@ class HybridPipe(dali.pipeline.Pipeline):
 
 
 #DATA_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/' 
-DATA_DIR = '/mnt/storage/datasets/ImageNet/raw-data/'
+VAL_DATA_DIR = '/mnt/storage/datasets/ImageNet/raw-data/'
+DATA_DIR = '/mnt/storage/datasets/ImageNet/'
 class DALIWrapper:
     """Wrap dali to look like torch dataloader"""
     def __init__(self, loader):
@@ -91,8 +92,8 @@ class DALIWrapper:
         return (( batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
 def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.1):
-    data_dir = DATA_DIR
-    data_dir = data_dir + 'train/' if train else data_dir + 'validation/'
+    data_dir = DATA_DIR + '320/' if sz < 224 else DATA_DIR + 'raw-data/'
+    data_dir = data_dir + 'train/' if train else VAL_DATA_DIR + 'validation/'
     print(data_dir)
     pipe = HybridPipe(
         data_dir=data_dir,

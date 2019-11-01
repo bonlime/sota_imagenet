@@ -68,6 +68,7 @@ class FileLogger:
   def get_logger(self, output_dir, log_to_file=True):
     logger = logging.getLogger('imagenet_training')
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False # remove doublicates in console
     formatter = logging.Formatter('%(message)s')
 
     if log_to_file:
