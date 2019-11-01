@@ -17,7 +17,12 @@ import torch.distributed as dist
 
 import pytorch_tools.models as models
 import pytorch_tools as pt
-from pytorch_tools.fit_wrapper.callbacks import PhasesScheduler, Logger
+from pytorch_tools.fit_wrapper.callbacks import Logger
+from pytorch_tools.fit_wrapper.callbacks import TensorBoard
+from pytorch_tools.fit_wrapper.callbacks import CheckpointSaver
+from pytorch_tools.fit_wrapper.callbacks import PhasesScheduler
+from pytorch_tools.fit_wrapper.callbacks import Callback as NoClbk
+
 from pytorch_tools.utils.misc import listify
 from pytorch_tools.optim import optimizer_from_name
 
@@ -79,7 +84,6 @@ def get_parser():
     add_arg('--local_rank', default=0, type=int,
             help='Used for multi-process training. Can either be manually set ' +
             'or automatically set by using \'python -m multiproc\'.')
-    # TODO write logs into separete folders
     add_arg('--logdir', default='logs', type=str,
             help='where logs go')
     add_arg('-n', '--name', type=str, default='', dest='name',
@@ -153,10 +157,11 @@ def main():
                                       max_loss_scale=2.**13,
                                       min_loss_scale=1.,
                                       verbosity=1)
-
+    logger_clb =  Logger(OUTDIR, logger=log.logger)
     if args.distributed:
         model = DDP(model, delay_allreduce=True)  # device_ids=[args.local_rank], output_device=args.local_rank)
-    
+        logger_clb = DistributedLogger(OUTDIR, logger=log.logger)
+
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
         model.load_state_dict(checkpoint['state_dict'])
@@ -168,12 +173,14 @@ def main():
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
     dm = DaliDataManager(PHASES)  # + args.start_epoch here
 
-    start_time=datetime.now()  # Loading start to after everything is loaded
 
     runner = pt.fit_wrapper.Runner(model, optimizer, criterion, verbose=IS_MASTER,
                                    metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
                                    callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
-                                              Logger(OUTDIR, logger=log.logger)])
+                                              logger_clb,
+                                              TensorBoard(OUTDIR, log_every=5) if IS_MASTER else NoClbk(),
+                                              CheckpointSaver(OUTDIR, save_name='model.chpn') if IS_MASTER else NoClbk()
+                                              ])
     if args.evaluate:
         dm.set_stage(0)
         return runner.evaluate(dm.val_dl)
@@ -181,34 +188,13 @@ def main():
     for idx in range(len(dm.stages)):
         dm.set_stage(idx)
         runner.fit(dm.trn_dl,
-                   steps_per_epoch=(None, 100)[args.short_epoch],
+                   steps_per_epoch=(None, 10)[args.short_epoch],
                    val_loader=dm.val_dl,
                    val_steps=(None, 10)[args.short_epoch],
                    epochs=dm.stage_len + dm.stages[idx]['ep'],
                    start_epoch=dm.stages[idx]['ep'])
     return runner._val_metrics[0].avg, [m.avg for m in runner._val_metrics[1]]
 
-
-def distributed_predict(input, target, model, criterion):
-    # Allows distributed prediction on uneven batches. Test set isn't always large enough for every GPU to get a batch
-    batch_size=input.size(0)
-    output=loss=corr1=corr5=valid_batches=0
-
-    if batch_size:
-        with torch.no_grad():
-            output=model(input)
-            loss=criterion(output, target).data
-        # measure accuracy and record loss
-        valid_batches=1
-        corr1, corr5=correct(output.data, target, topk=(1, 5))
-
-    metrics=torch.tensor([batch_size, valid_batches, loss, corr1, corr5]).float().cuda()
-    batch_total, valid_batches, reduced_loss, corr1, corr5=dist_utils.sum_tensor(metrics).cpu().numpy()
-    reduced_loss=reduced_loss/valid_batches
-
-    top1=corr1*(100.0/batch_total)
-    top5=corr5*(100.0/batch_total)
-    return top1, top5, reduced_loss, batch_total
 
 class DaliDataManager():
     """Almost the same as DataManager but lazy and only gets dataloaders when asked"""
@@ -255,13 +241,43 @@ class DaliDataManager():
         val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, train=False, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
         return trn_loader, val_loader
 
+class DistributedLogger(Logger):
+    """Reduces metrics before printing"""
+    def on_epoch_end(self):
+        trn_l = self.runner._train_metrics[0].avg
+        trn_acc1, trn_acc5 = (m.avg for m in self.runner._train_metrics[1])
+
+        val_l = self.runner._val_metrics[0].avg
+        val_acc1, val_acc5 = (m.avg for m in self.runner._val_metrics[1])
+
+        tensor = torch.tensor([trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5]).float().cuda()
+        trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = dist_utils.sum_tensor(tensor).cpu().numpy() / args.world_size
+        
+        # replace with reduced metrics. it's dirty but works
+        self.runner._train_metrics[0].avg = trn_l
+        self.runner._train_metrics[1][0].avg = trn_acc1
+        self.runner._train_metrics[1][1].avg = trn_acc5
+        self.runner._val_metrics[0].avg = val_l
+        self.runner._val_metrics[1][0].avg = val_acc1
+        self.runner._val_metrics[1][1].avg = val_acc5
+
+        trn_str = 'Train       loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}'.format(trn_l, trn_acc1, trn_acc5)
+        self.logger.info(trn_str)
+        self.logger.info('Val reduced loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}'.format(
+                val_l, val_acc1, val_acc5
+            ))
+
 if __name__ == '__main__':
+    start_time=time.time()  # Loading start to after everything is loaded
     _, res=main()
     acc1, acc5 = res[0], res[1]
     # need to calculate mean of val metrics between processes, because each validated on different images
     if args.distributed:
-        print('Distributed')
+        # print('Distributed')
         metrics = torch.tensor([acc1, acc5]).float().cuda()
         acc1, acc5 = dist_utils.sum_tensor(metrics).cpu().numpy() / args.world_size
-    print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(args.local_rank, res[0], res[1]))
-    print("Acc@1 {:.3f} Acc@5 {:.3f}".format(acc1, acc5))
+    # print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(args.local_rank, res[0], res[1]))
+    if IS_MASTER:
+        log.console("Acc@1 {:.3f} Acc@5 {:.3f}".format(acc1, acc5))
+        m = (time.time() - start_time) / 60
+        log.console("Total time: {}h {:.1f}m".format(int(m / 60), m % 60))
