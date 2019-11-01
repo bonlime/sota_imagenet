@@ -178,7 +178,7 @@ def main():
                                    metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
                                    callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
                                               logger_clb,
-                                              TensorBoard(OUTDIR, log_every=5) if IS_MASTER else NoClbk(),
+                                              TensorBoard(OUTDIR, log_every=(5,100)[args.short_epoch]) if IS_MASTER else NoClbk(),
                                               CheckpointSaver(OUTDIR, save_name='model.chpn') if IS_MASTER else NoClbk()
                                               ])
     if args.evaluate:
