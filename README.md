@@ -1,10 +1,11 @@
 # Evaluation results of pretrainded models:
+`CUDA_VISIBLE_DEVICES=2 python3 train_new.py -a resnet50 --phases="[{'ep':0,'sz':224,'bs':128, 'lr':0,'mom':0}]" --pretrained --logdir=logs/eval -e`
 ` python3 train.py -a resnet18 --phases="[{'ep':0,'sz':224,'bs':128, 'lr':0,'mom':0}]" --pretrained -e -p 100`
 Values in brackets are what we need. Values before are metrics in the last batch
 * Resnet18: NoRect, 224:              Acc@1 69.743 Acc@5 88.993
 * Resnet18: Rect, 224:                Acc@1 70.718 Acc@5 89.742
 * Resnet18: Rect, 256:                Acc@1 71.338 Acc@5 90.248
-* Resnet50: NoRect, 224:              Acc@1 76.038 Acc@5 92.917
+* Resnet50: NoRect, 224:              Acc@1 76.038 Acc@5 92.917 (Pytorch site states they have 76.15, 92.87)
 * Resnet50: Rect, 256:                Acc@1 76.958 Acc@5 93.528
 * Mobilenetv2: NoRect, 224            Acc@1 71.801 Acc@5 90.394
 * Mobilenetv2: Rect, 224              Acc@1 72.886 Acc@5 91.142
@@ -28,6 +29,7 @@ Exp3:
  
  python3 train.py --load-phases -a mobilenet_v2 -p 500 --opt_level=O2 --gpu=1 --logdir=logs/mbln2_rms-tmp --wd=4e-5  --optim=rmsprop --optim-param="{'alpha':0.9}" 
 
+python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py --load-phases -a resnet50 --logdir=logs/new_test --opt_level O2 -j 
 
 
 
