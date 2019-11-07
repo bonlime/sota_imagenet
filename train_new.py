@@ -36,6 +36,7 @@ from modules.dali_dataloader import get_loader
 from modules.experimental_utils import bnwd_optim_params
 from modules.logger import FileLogger
 from modules.phases import LOADED_PHASES
+from modules.mixup import MixUpWrapper
 
 
 def get_parser():
@@ -71,6 +72,7 @@ def get_parser():
     add_arg('--print-freq', '-p', default=5, type=int,
             metavar='N', help='log/print every this many steps (default: 5)')
     add_arg('--no-bn-wd', action='store_true', help='Remove batch norm from weight decay')
+    add_arg('--mixup', action='store_true', help='Use mixup augmentation')
     add_arg('--resume', default='', type=str, metavar='PATH',
             help='path to latest checkpoint (default: none)')
     add_arg('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -142,11 +144,11 @@ def main():
         model = models.__dict__[args.arch]()
     model = model.cuda()
 
-    # best_top5 = 93  # only save models over 93%. Otherwise it stops to save every time
     optim_params = bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = pt.losses.CrossEntropyLoss(one_hot=args.mixup, num_classes=1000).cuda()
+    # criterion = nn.CrossEntropyLoss().cuda()
     # start with 0 lr. Scheduler will change this later
     kwargs = eval(args.optim_params)
     optimizer = optimizer_from_name(args.optim)(optim_params, lr=0, weight_decay=args.weight_decay, **kwargs)
@@ -164,9 +166,23 @@ def main():
 
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
+        has_module_in_name = list(checkpoint['state_dict'].keys())[0].split('.')[0] == 'module'
+        if has_module_in_name and not args.distributed:
+            # remove `modules` from names
+            new_sd = {}
+            for k, v in checkpoint['state_dict'].items():
+                new_key = '.'.join(k.split('.')[1:])
+                new_sd[new_key] = v
+            checkpoint['state_dict'] = new_sd
+        if not has_module_in_name and args.distributed:
+            # add 'modules' to names
+            new_sd = {}
+            for k, v in m['state_dict'].items():
+                new_key = 'module.' + k 
+                new_sd[new_key] = v
+            checkpoint['state_dict'] = new_sd
         model.load_state_dict(checkpoint['state_dict'])
         args.start_epoch = checkpoint['epoch']
-        best_top5 = checkpoint['best_top5']
         optimizer.load_state_dict(checkpoint['optimizer'])
 
     # data phases are parsed from start and shedule phases are parsed from the end
@@ -239,6 +255,9 @@ class DaliDataManager():
             
         trn_loader=get_loader(sz=sz, bs=bs, workers=args.workers, train=True, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
         val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, train=False, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
+
+        if args.mixup:
+            trn_loader = MixUpWrapper(0.4, 1000, trn_loader)
         return trn_loader, val_loader
 
 class DistributedLogger(Logger):
