@@ -73,6 +73,7 @@ def get_parser():
             metavar='N', help='log/print every this many steps (default: 5)')
     add_arg('--no-bn-wd', action='store_true', help='Remove batch norm from weight decay')
     add_arg('--mixup', action='store_true', help='Use mixup augmentation')
+    add_arg('--smooth', action='store_true', help='Use label smoothing')
     add_arg('--resume', default='', type=str, metavar='PATH',
             help='path to latest checkpoint (default: none)')
     add_arg('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -147,7 +148,8 @@ def main():
     optim_params = bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
-    criterion = pt.losses.CrossEntropyLoss(one_hot=args.mixup, num_classes=1000).cuda()
+    args.smooth = args.smooth or args.mixup
+    criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if args.smooth else 0., one_hot=args.mixup, num_classes=1000).cuda()
     # criterion = nn.CrossEntropyLoss().cuda()
     # start with 0 lr. Scheduler will change this later
     kwargs = eval(args.optim_params)
@@ -155,7 +157,7 @@ def main():
 
     model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
-                                      loss_scale=1 if args.opt_level == 'O0' else 2048,
+                                      loss_scale=1 if args.opt_level == 'O0' else 128., # 2048,
                                       max_loss_scale=2.**13,
                                       min_loss_scale=1.,
                                       verbosity=1)
@@ -177,7 +179,7 @@ def main():
         if not has_module_in_name and args.distributed:
             # add 'modules' to names
             new_sd = {}
-            for k, v in m['state_dict'].items():
+            for k, v in checkpoint['state_dict'].items():
                 new_key = 'module.' + k 
                 new_sd[new_key] = v
             checkpoint['state_dict'] = new_sd
@@ -194,7 +196,7 @@ def main():
                                    metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
                                    callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
                                               logger_clb,
-                                              TensorBoard(OUTDIR, log_every=(5,100)[args.short_epoch]) if IS_MASTER else NoClbk(),
+                                              TensorBoard(OUTDIR, log_every=25) if IS_MASTER else NoClbk(),
                                               CheckpointSaver(OUTDIR, save_name='model.chpn') if IS_MASTER else NoClbk()
                                               ])
     if args.evaluate:
@@ -257,7 +259,7 @@ class DaliDataManager():
         val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, train=False, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
 
         if args.mixup:
-            trn_loader = MixUpWrapper(0.4, 1000, trn_loader)
+            trn_loader = MixUpWrapper(0.3, 1000, trn_loader)
         return trn_loader, val_loader
 
 class DistributedLogger(Logger):
