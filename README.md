@@ -31,7 +31,10 @@ Exp3:
 
 python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py --load-phases -a resnet50 --logdir=logs/new_test --opt_level O2 -j 
 
+Upd. 11.11.19
+Trained model to Acc@1 75.630 Acc@5 92.600 but it was really hard and I had to use various tricks like mixup and etc.
 
+ python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py --load-phases -a resnet34 --logdir=logs/new_test34 --opt_level O2 -j 4 --optim sgdw  --optim-param "{'nesterov': True, 'momentum':0.9}" --no-bn-wd --smooth --wd 1e-5
 
 Code to reproduce ImageNet in 18 minutes, by Andrew Shaw, Yaroslav Bulatov, and Jeremy Howard. High-level overview of techniques used is [here](http://fast.ai/2018/08/10/fastai-diu-imagenet/)
 

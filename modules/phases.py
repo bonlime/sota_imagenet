@@ -94,22 +94,55 @@
 #   {'ep':(33, 34), 'lr':(lr/25*bs_scale[2], lr/125*bs_scale[2])},
 # ]
 
+# default Imagenet settings
+[
+    {"ep": 0, "sz": 224, "bs": 128}, 
+    {"ep": [0, 5], "lr": [0, 0.1], "mom": 0.9}, 
+    {"ep": 5, "lr": 0.1}, {"ep": 30, "lr": 0.01}, 
+    {"ep": 60, "lr": 0.001}, 
+    {"ep": [90, 120], "lr": [0.0001, 0.0001]}
+]
+
+
+# 10.11.19 phases with reset
+# lr = 0.7
+# bs = [512, 224, 128] # largest batch size that fits in memory for each image size
+# bs_scale = [x/bs[0] for x in bs]
+# LOADED_PHASES = [
+#   {'ep':0,  'sz':128, 'bs':bs[0]},
+#   {'ep':(0,2), 'lr': (lr/50, lr/2), 'mom':0.9},
+#   {'ep':(2,10),  'lr':(lr/2,lr*2), 'mode':'cos'},
+#   {'ep':(10,30), 'lr':(lr*2,lr/2), 'mode':'cos'}, # trying one cycle
+#   {'ep':30, 'sz':192, 'bs':bs[1]},
+#   {'ep':(30, 38), 'lr':(lr*bs_scale[1], lr/50*bs_scale[1]), 'mode':'cos'},
+#   # we got a good starting weigths, can reset now
+#   {'ep':38,  'sz':128, 'bs':bs[0]},
+#   {'ep':(38, 50), 'lr': (lr/50, lr*2), 'mode':'cos'},
+#   {'ep':(50, 76),'lr': (lr*2, lr/2), 'mode': 'cos'},
+#   {'ep':76, 'sz':192, 'bs':bs[1]},
+#   {'ep':(76, 106), 'lr':(lr*bs_scale[1], lr/100*bs_scale[1]), 'mode':'cos'},
+#   {'ep':106, 'sz':224, 'bs':bs[2]}, 
+#   {'ep':(106, 150), 'lr':(lr/100*bs_scale[2], lr/2000*bs_scale[2]), 'mode':'cos'},
+# ]
+
+
+
 # 1.11.19
-lr = 0.9
-bs = [512, 224, 128] # largest batch size that fits in memory for each image size
-bs_scale = [x/bs[0] for x in bs]
-LOADED_PHASES = [
-  {'ep':0,  'sz':128, 'bs':bs[0]},
-  {'ep':(0,2), 'lr': (lr/50, lr/2), 'mom':0.9},
-  {'ep':(2,10),  'lr':(lr/2,lr*2), 'mode':'cos'}, # lr warmup is better with --init-bn0
-  {'ep':(10,26), 'lr':(lr*2,lr/2), 'mode':'cos'}, # trying one cycle
-  {'ep':26, 'sz':192, 'bs':bs[1]},
-  {'ep':(26, 34), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
-  {'ep':34, 'sz':224, 'bs':bs[2]},
-  {'ep':(34, 40), 'lr':(lr/10*bs_scale[2], lr/200*bs_scale[2])},
+# lr = 0.7
+# bs = [512, 224, 128] # largest batch size that fits in memory for each image size
+# bs_scale = [x/bs[0] for x in bs]
+# LOADED_PHASES = [
+#   {'ep':0,  'sz':128, 'bs':bs[0]},
+#   {'ep':(0,2), 'lr': (lr/50, lr/2), 'mom':0.9},
+#   {'ep':(2,10),  'lr':(lr/2,lr*2), 'mode':'cos'}, # lr warmup is better with --init-bn0
+#   {'ep':(10,26), 'lr':(lr*2,lr/2), 'mode':'cos'}, # trying one cycle
+#   {'ep':26, 'sz':192, 'bs':bs[1]},
+#   {'ep':(26, 34), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
+#   {'ep':38, 'sz':224, 'bs':bs[2]},
+#   {'ep':(38, 40), 'lr':(lr/10*bs_scale[2], lr/200*bs_scale[2])},
   #{'ep':28, 'sz':256, 'bs':bs[2]}, 
   #{'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
-]
+# ]
 
 # 91.5% in 9.62h
 # droped lr too early, could continue training on 128 till convergence
