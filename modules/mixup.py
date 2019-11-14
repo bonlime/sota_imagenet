@@ -1,10 +1,10 @@
 # from https://github.com/NVIDIA/DeepLearningExamples/blob/master/PyTorch/Classification/RN50v1.5/image_classification/mixup.py
 import torch
 import torch.nn as nn
-import numpy as np
 
 
 def mixup(alpha, num_classes, data, target):
+    tb = torch.distributions.Beta(alpha, alpha)
     with torch.no_grad():
         if len(target.shape) == 1: # if not one hot
             target_one_hot = torch.zeros(target.size(0), num_classes, 
@@ -13,10 +13,8 @@ def mixup(alpha, num_classes, data, target):
         else:
             target_one_hot = target
         bs = data.size(0)
-        c = np.random.beta(alpha, alpha)
-
+        c = tb.sample()
         perm = torch.randperm(bs).cuda()
-
         md = c * data + (1-c) * data[perm, :]
         mt = c * target_one_hot + (1-c) * target_one_hot[perm, :]
         return md, mt
