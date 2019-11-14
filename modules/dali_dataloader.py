@@ -1,7 +1,10 @@
 import os
 from nvidia import dali
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
+from absl import flags
+from absl.flags import FLAGS
 
+flags.DEFINE_bool('--ctwist', default=False, help='Enable color twist augmentation')
 
 class HybridPipe(dali.pipeline.Pipeline):
     def __init__(self,
@@ -27,15 +30,21 @@ class HybridPipe(dali.pipeline.Pipeline):
                 random_aspect_ratio=[0.8, 1.25],
                 random_area=[min_area, 1.0],
                 num_attempts=100)
+            # resize doesn't preserve aspect ratio on purpose
+            # works much better with INTERP_TRIANGULAR 
+            self.resize = dali.ops.Resize(
+                device='cpu' if dali_cpu else 'gpu', 
+                interp_type=dali.types.INTERP_TRIANGULAR,
+                resize_x = sz, resize_y = sz) 
         else:
             self.decode = dali.ops.ImageDecoder(
                 device="mixed",
                 output_type=dali.types.RGB)
-        # works much better with INTERP_TRIANGULAR 
-        self.resize = dali.ops.Resize(device='cpu' if dali_cpu and train else 'gpu', 
-                                      interp_type=dali.types.INTERP_TRIANGULAR,
-                                      resize_shorter=int(sz*1.14))
-        
+            self.resize = dali.ops.Resize(
+                device='gpu', 
+                interp_type=dali.types.INTERP_TRIANGULAR,
+                resize_shorter=int(sz*1.14)) 
+
         self.ctwist = dali.ops.ColorTwist(device = "gpu")
         self.jitter = dali.ops.Jitter(device ="gpu")
         self.normalize = dali.ops.CropMirrorNormalize(
@@ -63,11 +72,12 @@ class HybridPipe(dali.pipeline.Pipeline):
         if self.dali_cpu:
             images = images.gpu()
         if self.train:
-            images = self.ctwist(images, 
-                                saturation=self.rng1(), 
-                                contrast=self.rng2(),
-                                brightness=self.rng2(),
-                                hue=self.rng3())
+            if FLAGS.ctwist:
+                images = self.ctwist(images, 
+                                    saturation=self.rng1(), 
+                                    contrast=self.rng2(),
+                                    brightness=self.rng2(),
+                                    hue=self.rng3())
             # images = self.jitter(images, mask=self.coin())
             images = self.normalize(images, mirror=self.coin(), 
                                     crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
@@ -98,7 +108,8 @@ def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.1)
     pipe = HybridPipe(
         data_dir=data_dir,
         sz=sz, bs=bs, num_threads=workers, train=train,
-        local_rank=local_rank, world_size=world_size, min_area=min_area)
+        local_rank=local_rank, world_size=world_size, min_area=min_area, 
+        dali_cpu=sz < 224) # use gpu augmentation for huge batches to speed up training 
     pipe.build()
     loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader') / world_size, auto_reset=True)
     return DALIWrapper(loader)
