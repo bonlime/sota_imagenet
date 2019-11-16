@@ -94,13 +94,17 @@
 #   {'ep':(33, 34), 'lr':(lr/25*bs_scale[2], lr/125*bs_scale[2])},
 # ]
 
+
 # default Imagenet settings
-[
-    {"ep": 0, "sz": 224, "bs": 128}, 
-    {"ep": [0, 5], "lr": [0, 0.1], "mom": 0.9}, 
-    {"ep": 5, "lr": 0.1}, {"ep": 30, "lr": 0.01}, 
-    {"ep": 60, "lr": 0.001}, 
-    {"ep": [90, 120], "lr": [0.0001, 0.0001]}
+lr = 0.4
+LOADED_PHASES = [
+    {"ep": 0, "sz": 224, "bs": 256}, 
+    {"ep": [0, 5], "lr": [0, lr], "mom": 0.9}, 
+    {"ep": 5, "lr":  lr}, 
+    {"ep": 30, "lr": lr / 10}, 
+    {"ep": 60, "lr": lr / 100}, 
+    {"ep": 80, "lr": lr / 1000},
+    {"ep": [90, 100], "lr": [lr / 10000, lr / 10000]}
 ]
 
 
@@ -160,6 +164,22 @@
 #   {'ep':(24, 32), 'lr':(lr/10*bs_scale[2], lr/100*bs_scale[2])},
   #{'ep':28, 'sz':256, 'bs':bs[2]}, 
   #{'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
+# ]
+# trying to repeat the experiment above with new code base 14.11.19
+# lr = 0.5 # 0.125 * 4 gpus 
+# bs = [512, 224, 128] # largest batch size that fits in memory for each image size
+# bs_scale = [x/bs[0] for x in bs]
+
+# LOADED_PHASES = [
+#   {'ep':0,  'sz':128, 'bs':bs[0]},
+#   {'ep':(0,10),  'lr':(lr/2,lr*2), 'mom':0.9}, # lr warmup is better with --init-bn0
+#   {'ep':(10,20), 'lr':(lr*2,lr/2)}, # trying one cycle
+#   {'ep':20, 'sz':192, 'bs':bs[1]},
+#   {'ep':(20, 24), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
+#   {'ep':24, 'sz':224, 'bs':bs[2]},
+#   {'ep':(24, 28), 'lr':(lr/10*bs_scale[2], lr/100*bs_scale[2])},
+#   {'ep':28, 'sz':256, 'bs':bs[2]}, 
+#   {'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
 # ]
 
 

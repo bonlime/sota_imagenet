@@ -160,7 +160,7 @@ def main():
                                       loss_scale=1 if args.opt_level == 'O0' else 128., # 2048,
                                       max_loss_scale=2.**13,
                                       min_loss_scale=1.,
-                                      verbosity=1)
+                                      verbosity=0)
     logger_clb =  Logger(OUTDIR, logger=log.logger)
     if args.distributed:
         model = DDP(model, delay_allreduce=True)  # device_ids=[args.local_rank], output_device=args.local_rank)

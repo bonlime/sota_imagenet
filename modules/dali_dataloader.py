@@ -15,8 +15,8 @@ class HybridPipe(dali.pipeline.Pipeline):
                  train,
                  local_rank,
                  world_size,
-                 min_area=0.1,
-                 dali_cpu=True):
+                 min_area=0.08,
+                 dali_cpu=False):
 
         super(HybridPipe, self).__init__(bs, num_threads, local_rank)
         # only shuffle train data
@@ -57,8 +57,8 @@ class HybridPipe(dali.pipeline.Pipeline):
             output_layout=dali.types.NCHW) 
         self.coin = dali.ops.CoinFlip()
         self.rng1 = dali.ops.Uniform(range=[0,1])
-        self.rng2 = dali.ops.Uniform(range=[0.8,1.2])
-        self.rng3 = dali.ops.Uniform(range=[-0.5,0.5])
+        self.rng2 = dali.ops.Uniform(range=[0.85,1.15])
+        self.rng3 = dali.ops.Uniform(range=[-15, 15])
         self.train = train
         self.dali_cpu = dali_cpu
 
@@ -72,12 +72,11 @@ class HybridPipe(dali.pipeline.Pipeline):
         if self.dali_cpu:
             images = images.gpu()
         if self.train:
-            if FLAGS.ctwist:
-                images = self.ctwist(images, 
-                                    saturation=self.rng1(), 
-                                    contrast=self.rng2(),
-                                    brightness=self.rng2(),
-                                    hue=self.rng3())
+            # images = self.ctwist(images, 
+            #                     saturation=self.rng2(), 
+            #                     contrast=self.rng2(),
+            #                     brightness=self.rng2(),
+            #                     hue=self.rng3())
             # images = self.jitter(images, mask=self.coin())
             images = self.normalize(images, mirror=self.coin(), 
                                     crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
@@ -101,7 +100,7 @@ class DALIWrapper:
     def __iter__(self):
         return (( batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
-def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.1):
+def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.08):
     data_dir = DATA_DIR + '320/' if sz < 224 else DATA_DIR + 'raw-data/'
     data_dir = data_dir + 'train/' if train else VAL_DATA_DIR + 'validation/'
     print(data_dir)
@@ -109,7 +108,8 @@ def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.1)
         data_dir=data_dir,
         sz=sz, bs=bs, num_threads=workers, train=train,
         local_rank=local_rank, world_size=world_size, min_area=min_area, 
-        dali_cpu=sz < 224) # use gpu augmentation for huge batches to speed up training 
+        # dali_cpu=sz < 224 # use gpu augmentation for huge batches to speed up training 
+    )
     pipe.build()
     loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader') / world_size, auto_reset=True)
     return DALIWrapper(loader)
