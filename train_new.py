@@ -74,6 +74,7 @@ def get_parser():
     add_arg('--no-bn-wd', action='store_true', help='Remove batch norm from weight decay')
     add_arg('--mixup', action='store_true', help='Use mixup augmentation')
     add_arg('--smooth', action='store_true', help='Use label smoothing')
+    add_arg('--ctwist', action='store_true', help='Turns on color twist augmentation')
     add_arg('--resume', default='', type=str, metavar='PATH',
             help='path to latest checkpoint (default: none)')
     add_arg('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -255,8 +256,13 @@ class DaliDataManager():
         else:
             val_bs=max(bs, 128)
             
-        trn_loader=get_loader(sz=sz, bs=bs, workers=args.workers, train=True, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
-        val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, train=False, local_rank=args.local_rank, world_size=args.world_size, **kwargs)
+        trn_loader=get_loader(sz=sz, bs=bs, workers=args.workers, 
+                              train=True, local_rank=args.local_rank,
+                              use_ctwist=args.ctwist,
+                              world_size=args.world_size, **kwargs)
+        val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, 
+                              train=False, local_rank=args.local_rank, 
+                              world_size=args.world_size, **kwargs)
 
         if args.mixup:
             trn_loader = MixUpWrapper(0.3, 1000, trn_loader)
