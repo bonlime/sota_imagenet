@@ -27,7 +27,7 @@ class HybridPipe(dali.pipeline.Pipeline):
             self.decode = dali.ops.ImageDecoderRandomCrop(
                 device="cpu" if dali_cpu else 'mixed',
                 output_type=dali.types.RGB,
-                random_aspect_ratio=[0.8, 1.25],
+                random_aspect_ratio=[0.75, 1.25],
                 random_area=[min_area, 1.0],
                 num_attempts=100)
             # resize doesn't preserve aspect ratio on purpose
@@ -72,11 +72,12 @@ class HybridPipe(dali.pipeline.Pipeline):
         if self.dali_cpu:
             images = images.gpu()
         if self.train:
-            # images = self.ctwist(images, 
-            #                     saturation=self.rng2(), 
-            #                     contrast=self.rng2(),
-            #                     brightness=self.rng2(),
-            #                     hue=self.rng3())
+            # always improves quiality slightly
+            images = self.ctwist(images, 
+                                saturation=self.rng2(), 
+                                contrast=self.rng2(),
+                                brightness=self.rng2(),
+                                hue=self.rng3())
             # images = self.jitter(images, mask=self.coin())
             images = self.normalize(images, mirror=self.coin(), 
                                     crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
