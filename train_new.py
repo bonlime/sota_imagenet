@@ -94,15 +94,22 @@ def get_parser():
             help='Name of this run. If empty it would be a timestamp')
     add_arg('--short-epoch', action='store_true',
             help='make epochs short (for debugging)')
-    add_arg('--optim', type=str, default='SGD', choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
+    add_arg('--optim', type=str, default='SGD', #choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
             help='Optimizer to use (default: sgd)')
     add_arg('--optim-params', type=str, default='{}', help='Additional optimizer params as kwargs')
+    add_arg('--deterministic', action='store_true')
     return parser
 
 
 # makes it slightly faster
-cudnn.benchmark = True
 args = get_parser().parse_args()
+
+cudnn.benchmark = True
+if args.deterministic:
+    cudnn.benchmark = False
+    cudnn.deterministic = True
+    torch.manual_seed(args.local_rank)
+
 
 # detect distributed
 args.world_size = int(os.environ.get('WORLD_SIZE', 1))
