@@ -71,10 +71,12 @@ def get_parser():
     # add_arg('--init-bn0', action='store_true', help='Intialize running batch norm mean to 0')
     add_arg('--print-freq', '-p', default=5, type=int,
             metavar='N', help='log/print every this many steps (default: 5)')
-    add_arg('--no-bn-wd', action='store_true', help='Remove batch norm from weight decay')
+    add_arg('--no-bn-wd', action='store_true',
+            help='Remove batch norm from weight decay')
     add_arg('--mixup', action='store_true', help='Use mixup augmentation')
     add_arg('--smooth', action='store_true', help='Use label smoothing')
-    add_arg('--ctwist', action='store_true', help='Turns on color twist augmentation')
+    add_arg('--ctwist', action='store_true',
+            help='Turns on color twist augmentation')
     add_arg('--resume', default='', type=str, metavar='PATH',
             help='path to latest checkpoint (default: none)')
     add_arg('-e', '--evaluate', dest='evaluate', action='store_true',
@@ -94,9 +96,10 @@ def get_parser():
             help='Name of this run. If empty it would be a timestamp')
     add_arg('--short-epoch', action='store_true',
             help='make epochs short (for debugging)')
-    add_arg('--optim', type=str, default='SGD', #choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
+    add_arg('--optim', type=str, default='SGD',  # choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
             help='Optimizer to use (default: sgd)')
-    add_arg('--optim-params', type=str, default='{}', help='Additional optimizer params as kwargs')
+    add_arg('--optim-params', type=str, default='{}',
+            help='Additional optimizer params as kwargs')
     add_arg('--deterministic', action='store_true')
     return parser
 
@@ -153,30 +156,36 @@ def main():
         model = models.__dict__[args.arch]()
     model = model.cuda()
 
-    optim_params = bnwd_optim_params(model) if args.no_bn_wd else model.parameters()
+    optim_params = bnwd_optim_params(
+        model) if args.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
-    args.smooth = args.smooth or args.mixup
-    criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if args.smooth else 0., one_hot=args.mixup, num_classes=1000).cuda()
+    # args.smooth = args.smooth or args.mixup
+    criterion = pt.losses.CrossEntropyLoss(
+        smoothing=0.1 if args.smooth else 0.).cuda()
     # criterion = nn.CrossEntropyLoss().cuda()
     # start with 0 lr. Scheduler will change this later
     kwargs = eval(args.optim_params)
-    optimizer = optimizer_from_name(args.optim)(optim_params, lr=0, weight_decay=args.weight_decay, **kwargs)
+    optimizer = optimizer_from_name(args.optim)(
+        optim_params, lr=0, weight_decay=args.weight_decay, **kwargs)
 
     model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
-                                      loss_scale=1 if args.opt_level == 'O0' else 128., # 2048,
+                                      loss_scale=1 if args.opt_level == 'O0' else 128.,  # 2048,
                                       max_loss_scale=2.**13,
                                       min_loss_scale=1.,
                                       verbosity=0)
-    logger_clb =  Logger(OUTDIR, logger=log.logger)
+    logger_clb = Logger(OUTDIR, logger=log.logger)
     if args.distributed:
-        model = DDP(model, delay_allreduce=True)  # device_ids=[args.local_rank], output_device=args.local_rank)
+        # device_ids=[args.local_rank], output_device=args.local_rank)
+        model = DDP(model, delay_allreduce=True)
         logger_clb = DistributedLogger(OUTDIR, logger=log.logger)
 
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
-        has_module_in_name = list(checkpoint['state_dict'].keys())[0].split('.')[0] == 'module'
+        checkpoint = torch.load(
+            args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
+        has_module_in_name = list(checkpoint['state_dict'].keys())[
+            0].split('.')[0] == 'module'
         if has_module_in_name and not args.distributed:
             # remove `modules` from names
             new_sd = {}
@@ -188,7 +197,7 @@ def main():
             # add 'modules' to names
             new_sd = {}
             for k, v in checkpoint['state_dict'].items():
-                new_key = 'module.' + k 
+                new_key = 'module.' + k
                 new_sd[new_key] = v
             checkpoint['state_dict'] = new_sd
         model.load_state_dict(checkpoint['state_dict'])
@@ -199,13 +208,15 @@ def main():
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
     dm = DaliDataManager(PHASES)  # + args.start_epoch here
 
-
     runner = pt.fit_wrapper.Runner(model, optimizer, criterion, verbose=IS_MASTER,
-                                   metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
+                                   metrics=[
+                                       pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
                                    callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
                                               logger_clb,
-                                              TensorBoard(OUTDIR, log_every=25) if IS_MASTER else NoClbk(),
-                                              CheckpointSaver(OUTDIR, save_name='model.chpn') if IS_MASTER else NoClbk()
+                                              TensorBoard(
+                                                  OUTDIR, log_every=25) if IS_MASTER else NoClbk(),
+                                              CheckpointSaver(
+                                                  OUTDIR, save_name='model.chpn') if IS_MASTER else NoClbk()
                                               ])
     if args.evaluate:
         dm.set_stage(0)
@@ -226,57 +237,60 @@ class DaliDataManager():
     """Almost the same as DataManager but lazy and only gets dataloaders when asked"""
 
     def __init__(self, phases):
-        self.stages=[copy.deepcopy(p) for p in phases if 'bs' in p]
-        eps=[listify(p['ep']) for p in phases]
-        self.tot_epochs=max([max(ep) for ep in eps])
+        self.stages = [copy.deepcopy(p) for p in phases if 'bs' in p]
+        eps = [listify(p['ep']) for p in phases]
+        self.tot_epochs = max([max(ep) for ep in eps])
 
     def set_stage(self, idx):
-        stage=self.stages[idx]
+        stage = self.stages[idx]
         self._set_data(stage)
         if (idx+1) < len(self.stages):
-            self.stage_len=self.stages[idx+1]['ep'] - stage['ep']
+            self.stage_len = self.stages[idx+1]['ep'] - stage['ep']
         else:
-            self.stage_len=self.tot_epochs - stage['ep']
+            self.stage_len = self.tot_epochs - stage['ep']
 
     def _set_data(self, phase):
-        log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(phase["sz"], phase["bs"]))
+        log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(
+            phase["sz"], phase["bs"]))
         #tb.log_size(phase['bs'], phase['sz'])
         if getattr(self, 'trn_dl', None):
             # remove if exist. prevents DALI errors
             del self.trn_dl
             del self.val_dl
             torch.cuda.empty_cache()
-        self.trn_dl, self.val_dl=self._load_data(**phase)
+        self.trn_dl, self.val_dl = self._load_data(**phase)
 
     def _load_data(self, ep, sz, bs, **kwargs):
         if 'lr' in kwargs:
             del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs:
             del kwargs['mom']  # in case we mix schedule and data phases
-        self.rect=kwargs.get('rect_val', False)
+        self.rect = kwargs.get('rect_val', False)
         if self.rect:
             del kwargs['rect_val']
         if sz == 128:
-            val_bs=max(bs, 512)
+            val_bs = max(bs, 512)
         elif sz == 224:
-            val_bs=max(bs, 256)
+            val_bs = max(bs, 256)
         else:
-            val_bs=max(bs, 128)
-            
-        trn_loader=get_loader(sz=sz, bs=bs, workers=args.workers, 
-                              train=True, local_rank=args.local_rank,
-                              use_ctwist=args.ctwist,
-                              world_size=args.world_size, **kwargs)
-        val_loader=get_loader(sz=sz, bs=val_bs, workers=args.workers, 
-                              train=False, local_rank=args.local_rank, 
-                              world_size=args.world_size, **kwargs)
+            val_bs = max(bs, 128)
+
+        trn_loader = get_loader(sz=sz, bs=bs, workers=args.workers,
+                                train=True, local_rank=args.local_rank,
+                                use_ctwist=args.ctwist,
+                                world_size=args.world_size, **kwargs)
+        val_loader = get_loader(sz=sz, bs=val_bs, workers=args.workers,
+                                train=False, local_rank=args.local_rank,
+                                world_size=args.world_size, **kwargs)
 
         if args.mixup:
             trn_loader = MixUpWrapper(0.3, 1000, trn_loader)
         return trn_loader, val_loader
 
+
 class DistributedLogger(Logger):
     """Reduces metrics before printing"""
+
     def on_epoch_end(self):
         trn_l = self.runner._train_metrics[0].avg
         trn_acc1, trn_acc5 = (m.avg for m in self.runner._train_metrics[1])
@@ -284,9 +298,11 @@ class DistributedLogger(Logger):
         val_l = self.runner._val_metrics[0].avg
         val_acc1, val_acc5 = (m.avg for m in self.runner._val_metrics[1])
 
-        tensor = torch.tensor([trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5]).float().cuda()
-        trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = dist_utils.sum_tensor(tensor).cpu().numpy() / args.world_size
-        
+        tensor = torch.tensor(
+            [trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5]).float().cuda()
+        trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = dist_utils.sum_tensor(
+            tensor).cpu().numpy() / args.world_size
+
         # replace with reduced metrics. it's dirty but works
         self.runner._train_metrics[0].avg = trn_l
         self.runner._train_metrics[1][0].avg = trn_acc1
@@ -295,21 +311,24 @@ class DistributedLogger(Logger):
         self.runner._val_metrics[1][0].avg = val_acc1
         self.runner._val_metrics[1][1].avg = val_acc5
 
-        trn_str = 'Train       loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}'.format(trn_l, trn_acc1, trn_acc5)
+        trn_str = 'Train       loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}'.format(
+            trn_l, trn_acc1, trn_acc5)
         self.logger.info(trn_str)
         self.logger.info('Val reduced loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}'.format(
-                val_l, val_acc1, val_acc5
-            ))
+            val_l, val_acc1, val_acc5
+        ))
+
 
 if __name__ == '__main__':
-    start_time=time.time()  # Loading start to after everything is loaded
-    _, res=main()
+    start_time = time.time()  # Loading start to after everything is loaded
+    _, res = main()
     acc1, acc5 = res[0], res[1]
     # need to calculate mean of val metrics between processes, because each validated on different images
     if args.distributed:
         # print('Distributed')
         metrics = torch.tensor([acc1, acc5]).float().cuda()
-        acc1, acc5 = dist_utils.sum_tensor(metrics).cpu().numpy() / args.world_size
+        acc1, acc5 = dist_utils.sum_tensor(
+            metrics).cpu().numpy() / args.world_size
     # print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(args.local_rank, res[0], res[1]))
     if IS_MASTER:
         log.console("Acc@1 {:.3f} Acc@5 {:.3f}".format(acc1, acc5))
