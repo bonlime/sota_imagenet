@@ -124,5 +124,5 @@ def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.08
     loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader') / world_size,
                                         auto_reset=True,
                                         fill_last_batch=train,  # want real accuracy on validiation
-                                        last_batch_padded=False)  # want epochs to have the same length)
+                                        last_batch_padded=True)  # want epochs to have the same length)
     return DALIWrapper(loader)
