@@ -105,6 +105,7 @@ def parse_args():
     # set some defaults 
     args.sz = 224
     args.bs = 256
+    args.min_area = 0.08
     # detect distributed
     args.world_size = int(os.environ.get('WORLD_SIZE', 1))
     args.distributed = args.world_size > 1
@@ -265,8 +266,10 @@ class DaliDataManager():
             del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs:
             del kwargs['mom']  # in case we mix schedule and data phases
-        if 'min_area' in kwargs:
-            cfg.FLAGS.min_area = kwargs.pop('min_area')
+        # change global parameters from phases
+        for k, v in kwargs.items():
+            if hasattr(cfg.FLAGS, k):
+                cfg.FLAGS.k = v
 
         if sz == 128:
             val_bs = max(bs, 512)
