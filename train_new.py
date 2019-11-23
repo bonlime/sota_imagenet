@@ -284,7 +284,7 @@ class DaliDataManager():
         val_loader = get_loader(False)
 
         if cfg.FLAGS.mixup:
-            trn_loader = MixUpWrapper(0.3, 1000, trn_loader)
+            trn_loader = MixUpWrapper(cfg.FLAGS.mixup, 1000, trn_loader)
         return trn_loader, val_loader
 
 
