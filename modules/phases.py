@@ -1,4 +1,4 @@
-# TODO
+"""File with different training phases for Imagenet"""
 # Try no wd for bias
 # label smoothing. Changes the ideal output from +oo to something finite
 # Can be implemented as label smoothing + KLDivLoss. But need to check that it's the same as xent
@@ -24,7 +24,7 @@
 #   {'ep':0,  'sz':128, 'bs':bs[0]},
 #   {'ep':0, 'lr': lr/10, 'mom':0.9},
 #   {'ep':1,  'sz':224, 'bs':bs[2]},
-#{'ep':1, 'lr': lr/10, 'mom':0.9}
+# {'ep':1, 'lr': lr/10, 'mom':0.9}
 # ]
 # LOADED_PHASES = [
 #   {'ep':0,  'sz':128, 'bs':bs[0]},
@@ -56,9 +56,9 @@
 # ]
 
 
-#lr = 0.9
-#bs = [512, 224, 128]
-#bs_scale = [x/bs[0] for x in bs]
+# lr = 0.9
+# bs = [512, 224, 128]
+# bs_scale = [x/bs[0] for x in bs]
 # LOADED_PHASES = [
 #  {'ep':0,  'sz':128, 'bs':bs[0]},
 #  {'ep':(0,8),  'lr':(lr/4,lr*2), 'mom':0.9, 'mode':'cos'},
@@ -103,15 +103,15 @@
 # ]
 
 # default cosine Imagenet settings
-lr = 0.5
-LOADED_PHASES = [
-    {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
-    {"ep": 5, "lr":  lr},
-    {"ep": 30, "lr": lr / 10},
-    {"ep": 60, "lr": lr / 100},
-    {"ep": [80, 90], "lr": [lr / 1000, lr / 1000]}
-]
+# lr = 0.5
+# LOADED_PHASES = [
+#     {"ep": 0, "sz": 224, "bs": 256},
+#     {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
+#     {"ep": 5, "lr":  lr},
+#     {"ep": 30, "lr": lr / 10},
+#     {"ep": 60, "lr": lr / 100},
+#     {"ep": [80, 90], "lr": [lr / 1000, lr / 1000]}
+# ]
 
 
 # 10.11.19 phases with reset
@@ -149,8 +149,8 @@ LOADED_PHASES = [
 #   {'ep':(26, 34), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
 #   {'ep':38, 'sz':224, 'bs':bs[2]},
 #   {'ep':(38, 40), 'lr':(lr/10*bs_scale[2], lr/200*bs_scale[2])},
-#{'ep':28, 'sz':256, 'bs':bs[2]},
-#{'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
+# {'ep':28, 'sz':256, 'bs':bs[2]},
+# {'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
 # ]
 
 # 91.5% in 9.62h
@@ -167,8 +167,8 @@ LOADED_PHASES = [
 #   {'ep':(20, 24), 'lr':(lr*bs_scale[1], lr/10*bs_scale[1])},
 #   {'ep':24, 'sz':224, 'bs':bs[2]},
 #   {'ep':(24, 32), 'lr':(lr/10*bs_scale[2], lr/100*bs_scale[2])},
-#{'ep':28, 'sz':256, 'bs':bs[2]},
-#{'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
+# {'ep':28, 'sz':256, 'bs':bs[2]},
+# {'ep':(28, 32), 'lr':(lr/100*bs_scale[2], lr/1000*bs_scale[2])},
 # ]
 # trying to repeat the experiment above with new code base 14.11.19
 # lr = 0.5 # 0.125 * 4 gpus
@@ -204,7 +204,7 @@ LOADED_PHASES = [
 # ]
 
 
-######## NEW PHASES Starting from 17.11.19 #######
+# NEW PHASES Starting from 17.11.19 #######
 # cite from of the last Google papers
 # For full ImageNet training, we use RMSProp optimizer
 # with decay 0.9 and momentum 0.9. Batch norm is added
@@ -251,12 +251,33 @@ LOADED_PHASES = [
 # LOADED_PHASES = [{"ep": 0, "sz": 224, "bs": 256}, {"ep": [0, 5], "lr": [0, 0.007]}]
 
 # Need to test
-# lr = 0.4
+# lr = 0.1
 # bs = 256
 # LOADED_PHASES = [
-#     {"ep": 0, "sz": 128, "bs": bs},
+#     {"ep": 0, "sz": 224, "bs": bs},
 #     {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
-#     {"ep": [5, 90], "lr":  [lr, 0], 'mode':'cos'},
+#     {"ep": [5, 60], "lr":  [lr, lr/100], 'mode':'cos'},
 #     {"ep": 30, "sz": 192, "bs": bs},
 #     {"ep": 60, "sz": 224, "bs": bs},
+#     {"ep": [60, 100], "lr":  [lr/100, 0], 'mode':'cos'},
+# ]
+
+lr = 1e-3
+bs = 256
+LOADED_PHASES = [
+    {"ep": 0, "sz": 224, "bs": bs, 'min_area': 0.95},
+    {"ep": [0, 20], "lr": [lr, lr], "mom": 0.9},
+    # {"ep": [5, 60], "lr":  [lr, lr/100], 'mode':'cos'},
+    # {"ep": 30, "sz": 192, "bs": bs},
+    # {"ep": 60, "sz": 224, "bs": bs},
+    # {"ep": [60, 100], "lr":  [lr/100, 0], 'mode':'cos'},
+]
+
+
+# testing Novograd
+# lr = 0.4
+# LOADED_PHASES = [
+#     {"ep": 0, "sz": 224, "bs": 256},
+#     {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
+#     {"ep": [5, 150], "lr":  [lr, 0], 'mode':'cos'},
 # ]

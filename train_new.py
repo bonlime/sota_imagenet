@@ -38,26 +38,31 @@ from modules.logger import FileLogger
 from modules.phases import LOADED_PHASES
 from modules.mixup import MixUpWrapper
 
+# from absl import flags
+# from absl.flags import FLAGS
+import modules.config as cfg
+from modules.config import FLAGS
+# FLAGS = cfg.FLAGS
 
-def get_parser():
-    model_names = sorted(name for name in models.__dict__
-                         if name.islower() and not name.startswith("__")
-                         and callable(models.__dict__[name]))
+
+def parse_args():
+
+    model_names = sorted(
+        name for name in models.__dict__ if name.islower() and not name.startswith("__") and callable(models.__dict__[name]))
 
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     # parser.add_argument('data', metavar='DIR', help='path to dataset')
     add_arg = parser.add_argument
     add_arg('--arch', '-a', metavar='ARCH', default='resnet18',
             choices=model_names,
-            help='model architecture: ' +
-            ' | '.join(model_names) +
-            ' (default: resnet18)')
+            help='model architecture: ' + ' | '.join(model_names) + ' (default: resnet18)')
     add_arg('--pretrained', dest='pretrained', action='store_true',
             help='use pre-trained model')
     # add_arg('--gpu', type=int, default='0',
     #         help='GPU to use')
     add_arg('--phases', type=str,
-            help='Specify epoch order of data resize and learning rate schedule: [{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]')
+            help='Specify epoch order of data resize and learning rate schedule:'
+                 '[{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]')
     add_arg('--load-phases', action='store_true',
             help='Flag to load phases from modules.phases config')
     # add_arg('--save-dir', type=str, default=Path.cwd(), help='Directory to save logs and models.')
@@ -101,133 +106,131 @@ def get_parser():
     add_arg('--optim-params', type=str, default='{}',
             help='Additional optimizer params as kwargs')
     add_arg('--deterministic', action='store_true')
-    return parser
+    add_arg('--lookahead', action='store_true',
+            help='Flag to wrap optimizer with Lookahead wrapper')
+
+    args = parser.parse_args()
+    # detect distributed
+    args.world_size = int(os.environ.get('WORLD_SIZE', 1))
+    args.distributed = args.world_size > 1
+
+    # Only want master rank logging to tensorboard
+    args.is_master = not args.distributed or args.local_rank == 0
+    name = args.name or str(datetime.now()).split('.')[0].replace(' ', '_')
+    cfg.FLAGS = args
+    return None
 
 
 # makes it slightly faster
-args = get_parser().parse_args()
-
 cudnn.benchmark = True
-if args.deterministic:
+if cfg.FLAGS.deterministic:
     cudnn.benchmark = False
     cudnn.deterministic = True
-    torch.manual_seed(args.local_rank)
+    torch.manual_seed(cfg.FLAGS.local_rank)
 
-
-# detect distributed
-args.world_size = int(os.environ.get('WORLD_SIZE', 1))
-args.distributed = args.world_size > 1
-
-# Only want master rank logging to tensorboard
-# is_master = (not args.distributed) or (args.local_rank == 0) #(dist_utils.env_rank() == 0)
-IS_MASTER = args.local_rank == 0
-name = args.name or str(datetime.now()).split('.')[0].replace(' ', '_')
 
 # save script and runing comand so we can reproduce from logs
-OUTDIR = os.path.join(args.logdir, name)
+OUTDIR = os.path.join(cfg.FLAGS.logdir, cfg.FLAGS.name)
 os.makedirs(OUTDIR, exist_ok=True)
 shutil.copy2(os.path.realpath(__file__), '{}'.format(OUTDIR))
 with open(OUTDIR + '/run.cmd', 'w') as fp:
     fp.write(' '.join(sys.argv[1:]) + '\n')
-PHASES = LOADED_PHASES if args.load_phases else eval(args.phases)
+PHASES = LOADED_PHASES if cfg.FLAGS.load_phases else eval(cfg.FLAGS.phases)
 with open(OUTDIR + '/phases.json', 'w') as fp:
     json.dump(PHASES, fp)
-print(IS_MASTER)
-log = FileLogger(OUTDIR, is_master=IS_MASTER)
+log = FileLogger(OUTDIR, is_master=cfg.FLAGS.is_master)
 
 
 def main():
-    log.console(args)
+    log.console(cfg.FLAGS)
 
-    if args.distributed:
+    if cfg.FLAGS.distributed:
         log.console('Distributed initializing process group')
-        torch.cuda.set_device(args.local_rank)
+        torch.cuda.set_device(cfg.FLAGS.local_rank)
         dist.init_process_group(backend='nccl', init_method='env://',
-                                world_size=args.world_size)
+                                world_size=cfg.FLAGS.world_size)
         # assert(dist_utils.env_world_size() == dist.get_world_size())
-        # log.console("Distributed: success (%d/%d)" % (args.local_rank, dist.get_world_size()))
+        # log.console("Distributed: success (%d/%d)" % (cfg.FLAGS.local_rank, dist.get_world_size()))
 
     log.console("Loading model")
-    if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained='imagenet')
+    if cfg.FLAGS.pretrained:
+        print("=> using pre-trained model '{}'".format(cfg.FLAGS.arch))
+        model = models.__dict__[cfg.FLAGS.arch](pretrained='imagenet')
     else:
-        print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+        print("=> creating model '{}'".format(cfg.FLAGS.arch))
+        model = models.__dict__[cfg.FLAGS.arch]()
     model = model.cuda()
 
     optim_params = bnwd_optim_params(
-        model) if args.no_bn_wd else model.parameters()
+        model) if cfg.FLAGS.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
-    # args.smooth = args.smooth or args.mixup
+    cfg.FLAGS.smooth = cfg.FLAGS.smooth or cfg.FLAGS.mixup
     criterion = pt.losses.CrossEntropyLoss(
-        smoothing=0.1 if args.smooth else 0.).cuda()
-    # criterion = nn.CrossEntropyLoss().cuda()
+        smoothing=0.1 if cfg.FLAGS.smooth else 0.).cuda()
     # start with 0 lr. Scheduler will change this later
-    kwargs = eval(args.optim_params)
-    optimizer = optimizer_from_name(args.optim)(
-        optim_params, lr=0, weight_decay=args.weight_decay, **kwargs)
+    kwargs = eval(cfg.FLAGS.optim_params)
+    optimizer = optimizer_from_name(cfg.FLAGS.optim)(
+        optim_params, lr=0, weight_decay=cfg.FLAGS.weight_decay, **kwargs)
 
-    model, optimizer = amp.initialize(model, optimizer,
-                                      opt_level=args.opt_level,
-                                      loss_scale=1 if args.opt_level == 'O0' else 128.,  # 2048,
-                                      max_loss_scale=2.**13,
-                                      min_loss_scale=1.,
-                                      verbosity=0)
-    logger_clb = Logger(OUTDIR, logger=log.logger)
-    if args.distributed:
-        # device_ids=[args.local_rank], output_device=args.local_rank)
-        model = DDP(model, delay_allreduce=True)
-        logger_clb = DistributedLogger(OUTDIR, logger=log.logger)
-
-    if args.resume:
+    if cfg.FLAGS.resume:
         checkpoint = torch.load(
-            args.resume, map_location=lambda storage, loc: storage.cuda(args.local_rank))
-        has_module_in_name = list(checkpoint['state_dict'].keys())[
+            cfg.FLAGS.resume, map_location=lambda storage, loc: storage.cuda(cfg.FLAGS.local_rank))
+        has_module_in_sd = list(checkpoint['state_dict'].keys())[
             0].split('.')[0] == 'module'
-        if has_module_in_name and not args.distributed:
+        if has_module_in_sd and not cfg.FLAGS.distributed:
             # remove `modules` from names
             new_sd = {}
             for k, v in checkpoint['state_dict'].items():
                 new_key = '.'.join(k.split('.')[1:])
                 new_sd[new_key] = v
             checkpoint['state_dict'] = new_sd
-        if not has_module_in_name and args.distributed:
-            # add 'modules' to names
-            new_sd = {}
-            for k, v in checkpoint['state_dict'].items():
-                new_key = 'module.' + k
-                new_sd[new_key] = v
-            checkpoint['state_dict'] = new_sd
         model.load_state_dict(checkpoint['state_dict'])
-        args.start_epoch = checkpoint['epoch']
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        cfg.FLAGS.start_epoch = checkpoint['epoch']
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        except ValueError:  # may raise an error if another optimzer was used
+            print('Failed to load state dict into optimizer')
+
+    if cfg.FLAGS.lookahead:
+        optimizer = pt.optim.Lookahead(optimizer)
+
+    model, optimizer = amp.initialize(model, optimizer,
+                                      opt_level=cfg.FLAGS.opt_level,
+                                      loss_scale=1 if cfg.FLAGS.opt_level == 'O0' else 128.,  # 2048,
+                                      max_loss_scale=2.**13,
+                                      min_loss_scale=1.,
+                                      verbosity=0)
+    logger_clb = Logger(OUTDIR, logger=log.logger)
+    if cfg.FLAGS.distributed:
+        model = DDP(model, delay_allreduce=True)
+        logger_clb = DistributedLogger(OUTDIR, logger=log.logger)
 
     # data phases are parsed from start and shedule phases are parsed from the end
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
-    dm = DaliDataManager(PHASES)  # + args.start_epoch here
+    dm = DaliDataManager(PHASES)  # + cfg.FLAGS.start_epoch here
 
-    runner = pt.fit_wrapper.Runner(model, optimizer, criterion, verbose=IS_MASTER,
+    runner = pt.fit_wrapper.Runner(model, optimizer, criterion, verbose=cfg.FLAGS.is_master,
                                    metrics=[
                                        pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
-                                   callbacks=[PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
+                                   callbacks=[PhasesScheduler(optimizer,
+                                                              [copy.deepcopy(p) for p in PHASES if 'lr' in p]),
                                               logger_clb,
                                               TensorBoard(
-                                                  OUTDIR, log_every=25) if IS_MASTER else NoClbk(),
+                                                  OUTDIR, log_every=25) if cfg.FLAGS.is_master else NoClbk(),
                                               CheckpointSaver(
-                                                  OUTDIR, save_name='model.chpn') if IS_MASTER else NoClbk()
+                                                  OUTDIR, save_name='model.chpn') if cfg.FLAGS.is_master else NoClbk()
                                               ])
-    if args.evaluate:
+    if cfg.FLAGS.evaluate:
         dm.set_stage(0)
         return runner.evaluate(dm.val_dl)
 
     for idx in range(len(dm.stages)):
         dm.set_stage(idx)
         runner.fit(dm.trn_dl,
-                   steps_per_epoch=(None, 10)[args.short_epoch],
+                   steps_per_epoch=(None, 10)[cfg.FLAGS.short_epoch],
                    val_loader=dm.val_dl,
-                   val_steps=(None, 10)[args.short_epoch],
+                   val_steps=(None, 10)[cfg.FLAGS.short_epoch],
                    epochs=dm.stage_len + dm.stages[idx]['ep'],
                    start_epoch=dm.stages[idx]['ep'])
     return runner._val_metrics[0].avg, [m.avg for m in runner._val_metrics[1]]
@@ -244,15 +247,15 @@ class DaliDataManager():
     def set_stage(self, idx):
         stage = self.stages[idx]
         self._set_data(stage)
-        if (idx+1) < len(self.stages):
-            self.stage_len = self.stages[idx+1]['ep'] - stage['ep']
+        if (idx + 1) < len(self.stages):
+            self.stage_len = self.stages[idx + 1]['ep'] - stage['ep']
         else:
             self.stage_len = self.tot_epochs - stage['ep']
 
     def _set_data(self, phase):
         log.event('Dataset changed.\nImage size: {}\nBatch size: {}'.format(
             phase["sz"], phase["bs"]))
-        #tb.log_size(phase['bs'], phase['sz'])
+        # tb.log_size(phase['bs'], phase['sz'])
         if getattr(self, 'trn_dl', None):
             # remove if exist. prevents DALI errors
             del self.trn_dl
@@ -265,6 +268,8 @@ class DaliDataManager():
             del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs:
             del kwargs['mom']  # in case we mix schedule and data phases
+        if 'min_area' in kwargs:
+            min_area = kwargs.pop('min_area')
         self.rect = kwargs.get('rect_val', False)
         if self.rect:
             del kwargs['rect_val']
@@ -275,15 +280,15 @@ class DaliDataManager():
         else:
             val_bs = max(bs, 128)
 
-        trn_loader = get_loader(sz=sz, bs=bs, workers=args.workers,
-                                train=True, local_rank=args.local_rank,
-                                use_ctwist=args.ctwist,
-                                world_size=args.world_size, **kwargs)
-        val_loader = get_loader(sz=sz, bs=val_bs, workers=args.workers,
-                                train=False, local_rank=args.local_rank,
-                                world_size=args.world_size, **kwargs)
+        trn_loader = get_loader(sz=sz, bs=bs, workers=cfg.FLAGS.workers,
+                                train=True, local_rank=cfg.FLAGS.local_rank,
+                                use_ctwist=cfg.FLAGS.ctwist, min_area=min_area,
+                                world_size=cfg.FLAGS.world_size, **kwargs)
+        val_loader = get_loader(sz=sz, bs=val_bs, workers=cfg.FLAGS.workers,
+                                train=False, local_rank=cfg.FLAGS.local_rank,
+                                world_size=cfg.FLAGS.world_size, **kwargs)
 
-        if args.mixup:
+        if cfg.FLAGS.mixup:
             trn_loader = MixUpWrapper(0.3, 1000, trn_loader)
         return trn_loader, val_loader
 
@@ -301,7 +306,7 @@ class DistributedLogger(Logger):
         tensor = torch.tensor(
             [trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5]).float().cuda()
         trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = dist_utils.sum_tensor(
-            tensor).cpu().numpy() / args.world_size
+            tensor).cpu().numpy() / cfg.FLAGS.world_size
 
         # replace with reduced metrics. it's dirty but works
         self.runner._train_metrics[0].avg = trn_l
@@ -324,13 +329,13 @@ if __name__ == '__main__':
     _, res = main()
     acc1, acc5 = res[0], res[1]
     # need to calculate mean of val metrics between processes, because each validated on different images
-    if args.distributed:
+    if cfg.FLAGS.distributed:
         # print('Distributed')
         metrics = torch.tensor([acc1, acc5]).float().cuda()
         acc1, acc5 = dist_utils.sum_tensor(
-            metrics).cpu().numpy() / args.world_size
-    # print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(args.local_rank, res[0], res[1]))
-    if IS_MASTER:
+            metrics).cpu().numpy() / cfg.FLAGS.world_size
+    # print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(cfg.FLAGS.local_rank, res[0], res[1]))
+    if cfg.FLAGS.is_master:
         log.console("Acc@1 {:.3f} Acc@5 {:.3f}".format(acc1, acc5))
         m = (time.time() - start_time) / 60
         log.console("Total time: {}h {:.1f}m".format(int(m / 60), m % 60))

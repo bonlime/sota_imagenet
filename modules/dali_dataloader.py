@@ -1,30 +1,25 @@
-import os
+"""Dali dataloader for imagenet"""
 from nvidia import dali
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
-from absl import flags
-from absl.flags import FLAGS
+import modules.config as cfg
 
-flags.DEFINE_bool('--ctwist', default=False,
-                  help='Enable color twist augmentation')
-
+DATA_DIR = 'data/'
 
 class HybridPipe(dali.pipeline.Pipeline):
-    def __init__(self,
-                 data_dir,
-                 sz,
-                 bs,
-                 num_threads,
-                 train,
-                 local_rank,
-                 world_size,
-                 min_area=0.08,
-                 dali_cpu=False,
-                 use_ctwist=False):
-
-        super(HybridPipe, self).__init__(bs, num_threads, local_rank)
+    def __init__(self, train, dali_cpu=False):
+        super(HybridPipe, self).__init__(cfg.FLAGS.bs, cfg.FLAGS.workers, cfg.FLAGS.local_rank)
+        sz = cfg.FLAGS.sz
+        data_dir = DATA_DIR + '320/' if sz < 224 and train else DATA_DIR + 'raw-data/'
+        data_dir += 'train/' if train else 'validation/'
+        if hasattr(cfg.FLAGS.min_area):
+            # to swtich between epochs
+            min_area = cfg.FLAGS.min_area
+        else:
+            min_area = 0.08 # Imagenet default
         # only shuffle train data
         self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=train,
-                                         shard_id=local_rank, num_shards=world_size)
+                                         shard_id=cfg.FLAGS.local_rank,
+                                         num_shards=cfg.FLAGS.world_size)
 
         if train:
             self.decode = dali.ops.ImageDecoderRandomCrop(
@@ -64,7 +59,6 @@ class HybridPipe(dali.pipeline.Pipeline):
         self.rng3 = dali.ops.Uniform(range=[-15, 15])
         self.train = train
         self.dali_cpu = dali_cpu
-        self.use_ctwist = use_ctwist
 
     def define_graph(self):
         # Read images and labels
@@ -76,7 +70,7 @@ class HybridPipe(dali.pipeline.Pipeline):
         if self.dali_cpu:
             images = images.gpu()
         if self.train:
-            if self.use_ctwist:
+            if cfg.FLAGS.use_ctwist:
                 # always improves quiality slightly
                 images = self.ctwist(images,
                                      saturation=self.rng2(),
@@ -92,11 +86,6 @@ class HybridPipe(dali.pipeline.Pipeline):
         return images, labels.gpu()
 
 
-#DATA_DIR = '/home/zakirov/datasets/imagenet_2012/raw_data/'
-VAL_DATA_DIR = '/mnt/storage/datasets/ImageNet/raw-data/'
-DATA_DIR = '/mnt/storage/datasets/ImageNet/'
-
-
 class DALIWrapper:
     """Wrap dali to look like torch dataloader"""
 
@@ -110,18 +99,11 @@ class DALIWrapper:
         return ((batch[0]['data'], batch[0]['label'].squeeze().long()) for batch in self.loader)
 
 
-def get_loader(sz, bs, workers, train, local_rank=0, world_size=1, min_area=0.08, use_ctwist=False):
-    data_dir = DATA_DIR + '320/' if sz < 224 else DATA_DIR + 'raw-data/'
-    data_dir = data_dir + 'train/' if train else VAL_DATA_DIR + 'validation/'
-    print(data_dir)
-    pipe = HybridPipe(
-        data_dir=data_dir,
-        sz=sz, bs=bs, num_threads=workers, train=train,
-        local_rank=local_rank, world_size=world_size, min_area=min_area, use_ctwist=use_ctwist,
-        # dali_cpu=sz < 224 # use gpu augmentation for huge batches to speed up training
-    )
+def get_loader(train):
+    """Returns train or val iterator over Imagenet data"""
+    pipe = HybridPipe(train=train)
     pipe.build()
-    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader') / world_size,
+    loader = DALIClassificationIterator(pipe, size=pipe.epoch_size('Reader') / cfg.FLAGS.world_size,
                                         auto_reset=True,
                                         fill_last_batch=train,  # want real accuracy on validiation
                                         last_batch_padded=True)  # want epochs to have the same length)
