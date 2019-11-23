@@ -11,11 +11,11 @@ class HybridPipe(dali.pipeline.Pipeline):
         sz = cfg.FLAGS.sz
         data_dir = DATA_DIR + '320/' if sz < 224 and train else DATA_DIR + 'raw-data/'
         data_dir += 'train/' if train else 'validation/'
-        if hasattr(cfg.FLAGS.min_area):
+        if hasattr(cfg.FLAGS, 'min_area'):
             # to swtich between epochs
             min_area = cfg.FLAGS.min_area
         else:
-            min_area = 0.08 # Imagenet default
+            min_area = 0.08  # Imagenet default
         # only shuffle train data
         self.input = dali.ops.FileReader(file_root=data_dir, random_shuffle=train,
                                          shard_id=cfg.FLAGS.local_rank,
@@ -41,7 +41,7 @@ class HybridPipe(dali.pipeline.Pipeline):
             self.resize = dali.ops.Resize(
                 device='gpu',
                 interp_type=dali.types.INTERP_TRIANGULAR,
-                resize_shorter=int(sz*1.14))
+                resize_shorter=int(sz * 1.14))
 
         self.ctwist = dali.ops.ColorTwist(device="gpu")
         self.jitter = dali.ops.Jitter(device="gpu")
@@ -70,7 +70,7 @@ class HybridPipe(dali.pipeline.Pipeline):
         if self.dali_cpu:
             images = images.gpu()
         if self.train:
-            if cfg.FLAGS.use_ctwist:
+            if cfg.FLAGS.ctwist:
                 # always improves quiality slightly
                 images = self.ctwist(images,
                                      saturation=self.rng2(),

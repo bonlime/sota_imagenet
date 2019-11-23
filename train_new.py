@@ -51,29 +51,25 @@ def parse_args():
         name for name in models.__dict__ if name.islower() and not name.startswith("__") and callable(models.__dict__[name]))
 
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-    # parser.add_argument('data', metavar='DIR', help='path to dataset')
     add_arg = parser.add_argument
     add_arg('--arch', '-a', metavar='ARCH', default='resnet18',
             choices=model_names,
             help='model architecture: ' + ' | '.join(model_names) + ' (default: resnet18)')
+    add_arg('--model-params', type=str, default='{}',
+            help='Additional model params as kwargs')
     add_arg('--pretrained', dest='pretrained', action='store_true',
             help='use pre-trained model')
-    # add_arg('--gpu', type=int, default='0',
-    #         help='GPU to use')
     add_arg('--phases', type=str,
             help='Specify epoch order of data resize and learning rate schedule:'
                  '[{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]')
     add_arg('--load-phases', action='store_true',
             help='Flag to load phases from modules.phases config')
-    # add_arg('--save-dir', type=str, default=Path.cwd(), help='Directory to save logs and models.')
     add_arg('-j', '--workers', default=4, type=int, metavar='N',
             help='number of data loading workers (default: 4)')
     add_arg('--start-epoch', default=0, type=int, metavar='N',
             help='manual epoch number (useful on restarts)')
     add_arg('--weight-decay', '--wd', default=1e-4, type=float,
             metavar='W', help='weight decay (default: 1e-4)')
-    # TODO actually add this feature
-    # add_arg('--init-bn0', action='store_true', help='Intialize running batch norm mean to 0')
     add_arg('--print-freq', '-p', default=5, type=int,
             metavar='N', help='log/print every this many steps (default: 5)')
     add_arg('--no-bn-wd', action='store_true',
@@ -88,11 +84,7 @@ def parse_args():
             help='evaluate model on validation set')
     add_arg('--opt_level', default='O0', type=str, choices=['O0', 'O1', 'O2', 'O3'],
             help='optimizatin level for apex. (default: "00")')
-    # add_arg('--distributed', action='store_true', help='Run distributed training. Default True') #infer automaticaly
-    # add_arg('--dist-url', default='env://', type=str,
-    #                    help='url used to set up distributed training')
-    # add_arg('--dist-backend', default='nccl', type=str, help='distributed backend')
-    add_arg('--local_rank', default=0, type=int,
+    add_arg('--local_rank', '--gpu', default=0, type=int,
             help='Used for multi-process training. Can either be manually set ' +
             'or automatically set by using \'python -m multiproc\'.')
     add_arg('--logdir', default='logs', type=str,
@@ -110,6 +102,9 @@ def parse_args():
             help='Flag to wrap optimizer with Lookahead wrapper')
 
     args = parser.parse_args()
+    # set some defaults 
+    args.sz = 224
+    args.bs = 256
     # detect distributed
     args.world_size = int(os.environ.get('WORLD_SIZE', 1))
     args.distributed = args.world_size > 1
@@ -120,7 +115,7 @@ def parse_args():
     cfg.FLAGS = args
     return None
 
-
+parse_args()
 # makes it slightly faster
 cudnn.benchmark = True
 if cfg.FLAGS.deterministic:
@@ -153,12 +148,13 @@ def main():
         # log.console("Distributed: success (%d/%d)" % (cfg.FLAGS.local_rank, dist.get_world_size()))
 
     log.console("Loading model")
+    kwargs = eval(cfg.FLAGS.model_params)
     if cfg.FLAGS.pretrained:
         print("=> using pre-trained model '{}'".format(cfg.FLAGS.arch))
-        model = models.__dict__[cfg.FLAGS.arch](pretrained='imagenet')
+        model = models.__dict__[cfg.FLAGS.arch](pretrained='imagenet', **kwargs)
     else:
         print("=> creating model '{}'".format(cfg.FLAGS.arch))
-        model = models.__dict__[cfg.FLAGS.arch]()
+        model = models.__dict__[cfg.FLAGS.arch](**kwargs)
     model = model.cuda()
 
     optim_params = bnwd_optim_params(
@@ -264,29 +260,25 @@ class DaliDataManager():
         self.trn_dl, self.val_dl = self._load_data(**phase)
 
     def _load_data(self, ep, sz, bs, **kwargs):
+
         if 'lr' in kwargs:
             del kwargs['lr']  # in case we mix schedule and data phases
         if 'mom' in kwargs:
             del kwargs['mom']  # in case we mix schedule and data phases
         if 'min_area' in kwargs:
-            min_area = kwargs.pop('min_area')
-        self.rect = kwargs.get('rect_val', False)
-        if self.rect:
-            del kwargs['rect_val']
+            cfg.FLAGS.min_area = kwargs.pop('min_area')
+
         if sz == 128:
             val_bs = max(bs, 512)
         elif sz == 224:
             val_bs = max(bs, 256)
         else:
             val_bs = max(bs, 128)
-
-        trn_loader = get_loader(sz=sz, bs=bs, workers=cfg.FLAGS.workers,
-                                train=True, local_rank=cfg.FLAGS.local_rank,
-                                use_ctwist=cfg.FLAGS.ctwist, min_area=min_area,
-                                world_size=cfg.FLAGS.world_size, **kwargs)
-        val_loader = get_loader(sz=sz, bs=val_bs, workers=cfg.FLAGS.workers,
-                                train=False, local_rank=cfg.FLAGS.local_rank,
-                                world_size=cfg.FLAGS.world_size, **kwargs)
+        cfg.FLAGS.sz = sz
+        cfg.FLAGS.bs = bs
+        trn_loader = get_loader(True)
+        cfg.FLAGS.bs = val_bs
+        val_loader = get_loader(False)
 
         if cfg.FLAGS.mixup:
             trn_loader = MixUpWrapper(0.3, 1000, trn_loader)
