@@ -74,7 +74,7 @@ def parse_args():
             metavar='N', help='log/print every this many steps (default: 5)')
     add_arg('--no-bn-wd', action='store_true',
             help='Remove batch norm from weight decay')
-    add_arg('--mixup', action='store_true', help='Use mixup augmentation')
+    add_arg('--mixup', type=float, default=0, help='Alpha for mixup augmentation. If 0 then mixup is diabled')
     add_arg('--smooth', action='store_true', help='Use label smoothing')
     add_arg('--ctwist', action='store_true',
             help='Turns on color twist augmentation')
@@ -283,7 +283,7 @@ class DaliDataManager():
         cfg.FLAGS.bs = val_bs
         val_loader = get_loader(False)
 
-        if cfg.FLAGS.mixup:
+        if cfg.FLAGS.mixup != 0:
             trn_loader = MixUpWrapper(cfg.FLAGS.mixup, 1000, trn_loader)
         return trn_loader, val_loader
 
