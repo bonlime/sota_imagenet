@@ -6,17 +6,18 @@ import torch.nn as nn
 def mixup(alpha, num_classes, data, target):
     tb = torch.distributions.Beta(alpha, alpha)
     with torch.no_grad():
-        if len(target.shape) == 1: # if not one hot
-            target_one_hot = torch.zeros(target.size(0), num_classes, 
-                                         dtype=torch.float, device=data.device)
+        if len(target.shape) == 1:  # if not one hot
+            target_one_hot = torch.zeros(
+                target.size(0), num_classes, dtype=torch.float, device=data.device
+            )
             target_one_hot.scatter_(1, target.unsqueeze(1), 1.0)
         else:
             target_one_hot = target
         bs = data.size(0)
         c = tb.sample()
         perm = torch.randperm(bs).cuda()
-        md = c * data + (1-c) * data[perm, :]
-        mt = c * target_one_hot + (1-c) * target_one_hot[perm, :]
+        md = c * data + (1 - c) * data[perm, :]
+        mt = c * target_one_hot + (1 - c) * target_one_hot[perm, :]
         return md, mt
 
 

@@ -265,9 +265,9 @@
 lr = 0.5
 bs = 256
 LOADED_PHASES = [
-    {"ep": 0, "sz": 224, "bs": bs, 'ctwist': True, 'mixup': 0.2},
-    {"ep": [0, 180], "lr": [lr, 0], "mom": 0.9, 'mode': 'cos'},
-    {"ep": 180, "sz": 224, "bs": bs, 'min_area': 0.4, 'ctwist': False, 'mixup': 0.},
+    {"ep": 0, "sz": 224, "bs": bs, "ctwist": True, "mixup": 0.2},
+    {"ep": [0, 180], "lr": [lr, 0], "mom": 0.9, "mode": "cos"},
+    {"ep": 180, "sz": 224, "bs": bs, "min_area": 0.4, "ctwist": False, "mixup": 0.0},
     {"ep": [180, 200], "lr": [1e-3, 1e-3]},
 ]
 
