@@ -112,7 +112,8 @@ def parse_args():
 
     # Only want master rank logging to tensorboard
     args.is_master = not args.distributed or args.local_rank == 0
-    name = args.name or str(datetime.now()).split('.')[0].replace(' ', '_')
+    timestamp = str(datetime.now()).split('.')[0].replace(' ', '_')
+    args.name = args.name + '_' + timestamp if args.name else timestamp 
     cfg.FLAGS = args
     return None
 
