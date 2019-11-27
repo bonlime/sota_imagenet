@@ -1,7 +1,7 @@
 # Our project gitignores
 logs/
 .vscode/
-data/
+data
 
 # Default python gitignore
 # Byte-compiled / optimized / DLL files
