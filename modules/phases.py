@@ -262,17 +262,14 @@
 #     {"ep": [60, 100], "lr":  [lr/100, 0], 'mode':'cos'},
 # ]
 
-lr = 1e-3
+lr = 0.5
 bs = 256
 LOADED_PHASES = [
-    {"ep": 0, "sz": 224, "bs": bs, 'min_area': 0.95},
-    {"ep": [0, 20], "lr": [lr, lr], "mom": 0.9},
-    # {"ep": [5, 60], "lr":  [lr, lr/100], 'mode':'cos'},
-    # {"ep": 30, "sz": 192, "bs": bs},
-    # {"ep": 60, "sz": 224, "bs": bs},
-    # {"ep": [60, 100], "lr":  [lr/100, 0], 'mode':'cos'},
+    {"ep": 0, "sz": 224, "bs": bs, 'ctwist': True, 'mixup': 0.2},
+    {"ep": [0, 180], "lr": [lr, 0], "mom": 0.9, 'mode': 'cos'},
+    {"ep": 180, "sz": 224, "bs": bs, 'min_area': 0.4, 'ctwist': False, 'mixup': 0.},
+    {"ep": [180, 200], "lr": [1e-3, 1e-3]},
 ]
-
 
 # testing Novograd
 # lr = 0.4
