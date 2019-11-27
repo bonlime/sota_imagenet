@@ -269,7 +269,7 @@ class DaliDataManager():
         # change global parameters from phases
         for k, v in kwargs.items():
             if hasattr(cfg.FLAGS, k):
-                cfg.FLAGS.k = v
+                setattr(cfg.FLAGS, k, v)
 
         if sz == 128:
             val_bs = max(bs, 512)
