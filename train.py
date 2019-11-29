@@ -37,6 +37,7 @@ from modules.experimental_utils import bnwd_optim_params
 from modules.logger import FileLogger
 from modules.phases import LOADED_PHASES
 from modules.mixup import MixUpWrapper
+from modules.cutmix import CutMixWrapper
 
 # from absl import flags
 # from absl.flags import FLAGS
@@ -117,6 +118,11 @@ def parse_args():
         default=0,
         help="Alpha for mixup augmentation. If 0 then mixup is diabled",
     )
+    add_arg(
+        "--cutmix",
+        type=float,
+        default=0,
+        help="Alpha for cutmix augmentation. If 0 then cutmix is diabled")
     add_arg("--smooth", action="store_true", help="Use label smoothing")
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
     add_arg(
@@ -368,6 +374,8 @@ class DaliDataManager:
         cfg.FLAGS.bs = val_bs
         val_loader = get_loader(False)
 
+        if cfg.FLAGS.cutmix != 0:
+            trn_loader = CutMixWrapper(cfg.FLAGS.cutmix, 1000, trn_loader)
         if cfg.FLAGS.mixup != 0:
             trn_loader = MixUpWrapper(cfg.FLAGS.mixup, 1000, trn_loader)
         return trn_loader, val_loader
