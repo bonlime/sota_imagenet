@@ -355,12 +355,13 @@ class DaliDataManager:
             if hasattr(cfg.FLAGS, k):
                 setattr(cfg.FLAGS, k, v)
 
+        # 50.000 should be dividable by val_bs * num_gpu
         if sz == 128:
-            val_bs = max(bs, 512)
+            val_bs = 500
         elif sz == 224:
-            val_bs = max(bs, 256)
+            val_bs = 250
         else:
-            val_bs = max(bs, 128)
+            val_bs = 125
         cfg.FLAGS.sz = sz
         cfg.FLAGS.bs = bs
         trn_loader = get_loader(True)
