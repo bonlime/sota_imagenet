@@ -362,6 +362,7 @@ class DaliDataManager:
                 setattr(cfg.FLAGS, k, v)
 
         # 50.000 should be dividable by val_bs * num_gpu
+        # otherwise reduced accuracy differs from acc on 1 gpu
         if sz == 128:
             val_bs = 500
         elif sz == 224:

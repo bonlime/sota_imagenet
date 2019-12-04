@@ -4,15 +4,19 @@ import numpy as np
 
 
 class CutMixWrapper:
-    def __init__(self, alpha, num_classes, loader):
+    def __init__(self, alpha, num_classes, loader, prob=0.5):
+        """alpha - hyperparam
+           prob - probability of applying a transform"""
         self.tb = torch.distributions.Beta(alpha, alpha)
         self.loader = loader
         self.num_classes = num_classes
+        self.prob = prob
 
     def __iter__(self):
         return (self.cutmix(d, t) for d, t in self.loader)
 
     def cutmix(self, data, target):
+
         with torch.no_grad():
             if len(target.shape) == 1:  # if not one hot
                 target_one_hot = torch.zeros(
@@ -21,6 +25,8 @@ class CutMixWrapper:
                 target_one_hot.scatter_(1, target.unsqueeze(1), 1.0)
             else:
                 target_one_hot = target
+            if np.random.rand() > self.prob:
+                return data, target_one_hot
             BS, C, H, W = data.size()
             perm = torch.randperm(BS).cuda()
             lam = self.tb.sample()
