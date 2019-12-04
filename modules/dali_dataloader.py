@@ -2,6 +2,7 @@
 from nvidia import dali
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 import modules.config as cfg
+import math
 
 DATA_DIR = "data/"
 
@@ -39,7 +40,8 @@ class HybridPipe(dali.pipeline.Pipeline):
             )
         else:
             self.decode = dali.ops.ImageDecoder(device="mixed", output_type=dali.types.RGB)
-            crop_size = 256 if sz == 224 else int(sz * 1.14)
+            # 14% bigger and dividable by 16 then center crop
+            crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16)
             self.resize = dali.ops.Resize(
                 device="gpu",
                 interp_type=dali.types.INTERP_TRIANGULAR,
@@ -117,6 +119,6 @@ def get_loader(train):
         size=pipe.epoch_size("Reader") / cfg.FLAGS.world_size,
         auto_reset=True,
         fill_last_batch=train,  # want real accuracy on validiation
-        last_batch_padded=True, # want epochs to have the same length
-    )  
+        last_batch_padded=True,  # want epochs to have the same length
+    )
     return DALIWrapper(loader)

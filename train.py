@@ -241,7 +241,8 @@ def main():
     optim_params = bnwd_optim_params(model) if cfg.FLAGS.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
-    cfg.FLAGS.smooth = cfg.FLAGS.smooth or cfg.FLAGS.mixup
+    # it's a good idea to use smooth with mixup but don't force it
+    # cfg.FLAGS.smooth = cfg.FLAGS.smooth or cfg.FLAGS.mixup
     criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if cfg.FLAGS.smooth else 0.0).cuda()
     # start with 0 lr. Scheduler will change this later
     kwargs = eval(cfg.FLAGS.optim_params)
