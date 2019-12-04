@@ -18,6 +18,7 @@ class HybridPipe(dali.pipeline.Pipeline):
             random_shuffle=train,
             shard_id=cfg.FLAGS.local_rank,
             num_shards=cfg.FLAGS.world_size,
+            read_ahead=True,
         )
 
         if train:
@@ -38,10 +39,11 @@ class HybridPipe(dali.pipeline.Pipeline):
             )
         else:
             self.decode = dali.ops.ImageDecoder(device="mixed", output_type=dali.types.RGB)
+            crop_size = 256 if sz == 224 else int(sz * 1.14)
             self.resize = dali.ops.Resize(
                 device="gpu",
                 interp_type=dali.types.INTERP_TRIANGULAR,
-                resize_shorter=int(sz * 1.14),
+                resize_shorter=crop_size,
             )
 
         self.ctwist = dali.ops.ColorTwist(device="gpu")
@@ -115,6 +117,6 @@ def get_loader(train):
         size=pipe.epoch_size("Reader") / cfg.FLAGS.world_size,
         auto_reset=True,
         fill_last_batch=train,  # want real accuracy on validiation
-        last_batch_padded=True,
-    )  # want epochs to have the same length)
+        last_batch_padded=True, # want epochs to have the same length
+    )  
     return DALIWrapper(loader)
