@@ -19,7 +19,7 @@ class HybridPipe(dali.pipeline.Pipeline):
             random_shuffle=train,
             shard_id=cfg.FLAGS.local_rank,
             num_shards=cfg.FLAGS.world_size,
-            read_ahead=True,
+            # read_ahead=True,
         )
 
         if train:

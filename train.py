@@ -122,7 +122,8 @@ def parse_args():
         "--cutmix",
         type=float,
         default=0,
-        help="Alpha for cutmix augmentation. If 0 then cutmix is diabled")
+        help="Alpha for cutmix augmentation. If 0 then cutmix is diabled",
+    )
     add_arg("--smooth", action="store_true", help="Use label smoothing")
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
     add_arg(

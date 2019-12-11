@@ -10,12 +10,11 @@
 # ]
 # for ep in range(1,110):
 #     LOADED_PHASES.append({'ep':ep, 'lr':0.045*0.99**ep})
-
-# FAILS WITH AUGMENTAION
+# FAILS WITH augmentation
 # PROBABLY CAN REPEAT THIS ERROR BY SWITCHING DATA LOADER
 # Original phases for 1 machine
 # 91.46 in 14.12h
-# The only modification was lr/2 instead of lr during the first stage. It's needed to avoid nan loss at the beginnning
+# The only modification was lr/2 instead of lr during the first stage. It's needed to avoid nan loss at the beginning
 # Don't know why it didn't work
 # lr = 0.9
 # bs = [512, 224, 128] # largest batch size that fits in memory for each image size
@@ -125,7 +124,7 @@
 #   {'ep':(10,30), 'lr':(lr*2,lr/2), 'mode':'cos'}, # trying one cycle
 #   {'ep':30, 'sz':192, 'bs':bs[1]},
 #   {'ep':(30, 38), 'lr':(lr*bs_scale[1], lr/50*bs_scale[1]), 'mode':'cos'},
-#   # we got a good starting weigths, can reset now
+#   # we got a good starting weights, can reset now
 #   {'ep':38,  'sz':128, 'bs':bs[0]},
 #   {'ep':(38, 50), 'lr': (lr/50, lr*2), 'mode':'cos'},
 #   {'ep':(50, 76),'lr': (lr*2, lr/2), 'mode': 'cos'},
@@ -154,7 +153,7 @@
 # ]
 
 # 91.5% in 9.62h
-# droped lr too early, could continue training on 128 till convergence
+# dropped lr too early, could continue training on 128 till convergence
 # 1.11.19: 91.39 in 2.65h on 4 V100
 # lr = 0.9
 # bs = [512, 224, 128] # largest batch size that fits in memory for each image size
@@ -262,14 +261,35 @@
 #     {"ep": [60, 100], "lr":  [lr/100, 0], 'mode':'cos'},
 # ]
 
+#  python3 -m torch.distributed.launch --nproc_per_node=4 train.py -a resnet34 --opt_level O1 --load-phases --no-bn-wd -n resnet34_1phase --optim fused_sgd --wd 1e-5 --lookahead --model-params "{'deep_stem':True, 'antialias':True}"
+# ~ 75.19
+# lr = 0.5
+# bs = 256
+# LOADED_PHASES = [
+#     {"ep": 0, "sz": 128, "bs": bs, "ctwist": True, "mixup": 0.2},
+#     {"ep": [0, 50], "lr": [lr, 0], "mom": 0.9, "mode": "cos"},
+#     {"ep": 50, "sz": 192, "bs": bs},
+#     {"ep": [50, 100], "lr": [lr, 0], "mode": "cos"},
+#     {"ep": 100, "sz": 224, "bs": bs},
+#     {"ep": [100, 150], "lr": [lr, 0], "mode": "cos"},
+#     {"ep": 150, "sz": 224, "bs": bs, "min_area": 0.4, "ctwist": False, "mixup": 0.0},
+#     {"ep": [150, 170], "lr": [1e-3, 1e-3]},
+# ]
+
+
+#  python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py -a resnet34 --opt_level O1 --load-phases --no-bn-wd -n resnet34_1phase --optim fused_sgd --wd 1e-5 --lookahead --smooth --mixup 0.2 --ctwist --model-params "{'deep_stem':True, 'antialias':True}"
+# 
 lr = 0.5
 bs = 256
 LOADED_PHASES = [
-    {"ep": 0, "sz": 224, "bs": bs, "ctwist": True, "mixup": 0.2},
-    {"ep": [0, 180], "lr": [lr, 0], "mom": 0.9, "mode": "cos"},
-    {"ep": 180, "sz": 224, "bs": bs, "min_area": 0.4, "ctwist": False, "mixup": 0.0},
-    {"ep": [180, 200], "lr": [1e-3, 1e-3]},
+    {"ep": 0, "sz": 128, "bs": bs},
+    {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
+    {"ep": [5, 200], "lr": [lr, 0], "mode": "cos"},
+    {"ep": 60, "sz": 192, "bs": bs},
+    {"ep": 120, "sz": 224, "bs": bs},
+    {"ep": 180, "sz": 224, "bs": bs, 'min_area': 0.2, 'cutmix': 0., 'ctwist': False},
 ]
+
 
 # testing Novograd
 # lr = 0.4
