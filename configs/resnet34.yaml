@@ -6,4 +6,9 @@ cutmix : 1.0
 ctwist : True
 lookahead : True
 short-epoch : True
-load-phases : True
+phases : [
+    {"ep": 0, "sz": 128, "bs": 256},
+    {"ep": 2, "sz": 224, "bs": 256},
+    {"ep": [0, 5], "lr": [0, 0.5], "mom": 0.9},
+    {"ep": 4, "sz": 224, "bs": 256, 'min_area': 0.2, 'cutmix': 0., 'ctwist': False},
+]

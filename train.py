@@ -39,7 +39,6 @@ from src.experimental_utils import bnwd_optim_params
 from src.logger import FileLogger
 from src.mixup import MixUpWrapper
 from src.cutmix import CutMixWrapper
-from configs.phases import LOADED_PHASES
 
 
 def parse_args():
@@ -54,6 +53,7 @@ def parse_args():
         description="PyTorch ImageNet Training",
         default_config_files=["configs/base.yaml"],
         args_for_setting_config_path=["-c"],
+        config_file_parser_class=argparse.YAMLConfigFileParser,
     )
     add_arg = parser.add_argument
     add_arg(
@@ -64,19 +64,14 @@ def parse_args():
         choices=model_names,
         help="model architecture: " + " | ".join(model_names) + " (default: resnet18)",
     )
-    add_arg("--model-params", type=json.loads, default={}, help="Additional model params as kwargs")
+    add_arg("--model-params", type=eval, default={}, help="Additional model params as kwargs")
     add_arg("--pretrained", dest="pretrained", action="store_true", help="use pre-trained model")
     add_arg(
         "--phases",
-        type=str,
+        type=eval,
         action='append',
         help="Specify epoch order of data resize and learning rate schedule:"
         '[{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]',
-    )
-    add_arg(
-        "--load-phases",
-        action="store_true",
-        help="Flag to load phases from modules.phases config",
     )
     add_arg(
         "-j",
@@ -138,7 +133,7 @@ def parse_args():
         default="SGD",  # choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
         help="Optimizer to use (default: sgd)",
     )
-    add_arg("--optim-params", type=json.loads, default={}, help="Additional optimizer params as kwargs")
+    add_arg("--optim-params", type=eval, default={}, help="Additional optimizer params as kwargs")
     add_arg("--deterministic", action="store_true")
     add_arg(
         "--lookahead", action="store_true", help="Flag to wrap optimizer with Lookahead wrapper",
@@ -169,11 +164,7 @@ OUTDIR = os.path.join(FLAGS.logdir, FLAGS.name)
 os.makedirs(OUTDIR, exist_ok=True)
 shutil.copy2(os.path.realpath(__file__), "{}".format(OUTDIR))
 
-PHASES = LOADED_PHASES if FLAGS.load_phases else json.loads(FLAGS.phases)
-json.dump(PHASES, open(OUTDIR + "/phases.json", "w"))
-flags_dict = vars(FLAGS)
-flags_dict.pop('phases') # they look messy in the yaml file
-yaml.dump(flags_dict, open(OUTDIR + '/config.yaml', 'w'))
+yaml.dump(vars(FLAGS), open(OUTDIR + '/config.yaml', 'w'), default_flow_style=None)
 log = FileLogger(OUTDIR, is_master=FLAGS.is_master)
 
 
@@ -188,7 +179,7 @@ def main():
     log.console("Loading model")
     if FLAGS.pretrained:
         print("=> using pre-trained model '{}'".format(FLAGS.arch))
-        model = models.__dict__[FLAGS.arch](pretrained="imagenet", **kwargs)
+        model = models.__dict__[FLAGS.arch](pretrained="imagenet", **FLAGS.model_params)
     else:
         print("=> creating model '{}'".format(FLAGS.arch))
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
@@ -243,7 +234,7 @@ def main():
 
     # data phases are parsed from start and shedule phases are parsed from the end
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
-    dm = DaliDataManager(PHASES)  # + FLAGS.start_epoch here
+    dm = DaliDataManager(FLAGS.phases)  # + FLAGS.start_epoch here
 
     runner = pt.fit_wrapper.Runner(
         model,
@@ -252,7 +243,7 @@ def main():
         verbose=FLAGS.is_master,
         metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
         callbacks=[
-            PhasesScheduler(optimizer, [copy.deepcopy(p) for p in PHASES if "lr" in p]),
+            PhasesScheduler(optimizer, [copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
             logger_clb,
             TensorBoard(OUTDIR, log_every=25) if FLAGS.is_master else NoClbk(),
             CheckpointSaver(OUTDIR, save_name="model.chpn") if FLAGS.is_master else NoClbk(),
