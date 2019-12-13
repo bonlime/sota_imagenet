@@ -276,19 +276,28 @@
 #     {"ep": [150, 170], "lr": [1e-3, 1e-3]},
 # ]
 
-
-#  python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py -a resnet34 --opt_level O1 --load-phases --no-bn-wd -n resnet34_1phase --optim fused_sgd --wd 1e-5 --lookahead --smooth --mixup 0.2 --ctwist --model-params "{'deep_stem':True, 'antialias':True}"
-# 
 lr = 0.5
 bs = 256
 LOADED_PHASES = [
     {"ep": 0, "sz": 128, "bs": bs},
+    {"ep": 2, "sz": 224, "bs": bs},
     {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
-    {"ep": [5, 200], "lr": [lr, 0], "mode": "cos"},
-    {"ep": 60, "sz": 192, "bs": bs},
-    {"ep": 120, "sz": 224, "bs": bs},
-    {"ep": 180, "sz": 224, "bs": bs, 'min_area': 0.2, 'cutmix': 0., 'ctwist': False},
+    {"ep": 4, "sz": 224, "bs": bs, 'min_area': 0.2, 'cutmix': 0., 'ctwist': False},
 ]
+
+
+#  python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py -a resnet34 --opt_level O1 --load-phases --no-bn-wd -n resnet34_1phase --optim fused_sgd --wd 1e-5 --lookahead --smooth --mixup 0.2 --ctwist --model-params "{'deep_stem':True, 'antialias':True}"
+# 
+# lr = 0.5
+# bs = 256
+# LOADED_PHASES = [
+#     {"ep": 0, "sz": 128, "bs": bs},
+#     {"ep": [0, 5], "lr": [0, lr], "mom": 0.9},
+#     {"ep": [5, 200], "lr": [lr, 0], "mode": "cos"},
+#     {"ep": 60, "sz": 192, "bs": bs},
+#     {"ep": 120, "sz": 224, "bs": bs},
+#     {"ep": 180, "sz": 224, "bs": bs, 'min_area': 0.2, 'cutmix': 0., 'ctwist': False},
+# ]
 
 
 # testing Novograd

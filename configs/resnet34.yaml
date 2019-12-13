@@ -1,0 +1,9 @@
+# name : resnet34_test
+arch : resnet34
+model-params : {"deep_stem": true,"antialias": true}
+weight-decay : 3e-5
+cutmix : 1.0
+ctwist : True
+lookahead : True
+short-epoch : True
+load-phases : True

@@ -1,24 +1,25 @@
 """Dali dataloader for imagenet"""
 from nvidia import dali
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
-import modules.config as cfg
+from pytorch_tools.utils.misc import env_rank, env_world_size
 import math
 
 DATA_DIR = "data/"
 
 
 class HybridPipe(dali.pipeline.Pipeline):
-    def __init__(self, train, dali_cpu=False):
-        super(HybridPipe, self).__init__(cfg.FLAGS.bs, cfg.FLAGS.workers, cfg.FLAGS.local_rank)
-        sz = cfg.FLAGS.sz
+    def __init__(self, train=False, bs=32, workers=4, sz=224, ctwist=True, dali_cpu=False, min_area=0.08):
+
+        local_rank, world_size = env_rank(), env_world_size()
+        super(HybridPipe, self).__init__(bs, workers, local_rank)
         data_dir = DATA_DIR + "320/" if sz < 224 and train else DATA_DIR + "raw-data/"
         data_dir += "train/" if train else "validation/"
         # only shuffle train data
         self.input = dali.ops.FileReader(
             file_root=data_dir,
             random_shuffle=train,
-            shard_id=cfg.FLAGS.local_rank,
-            num_shards=cfg.FLAGS.world_size,
+            shard_id=local_rank,
+            num_shards=world_size,
             # read_ahead=True,
         )
 
@@ -27,7 +28,7 @@ class HybridPipe(dali.pipeline.Pipeline):
                 device="cpu" if dali_cpu else "mixed",
                 output_type=dali.types.RGB,
                 random_aspect_ratio=[0.75, 1.25],
-                random_area=[cfg.FLAGS.min_area, 1.0],
+                random_area=[min_area, 1.0],
                 num_attempts=100,
             )
             # resize doesn't preserve aspect ratio on purpose
@@ -43,12 +44,10 @@ class HybridPipe(dali.pipeline.Pipeline):
             # 14% bigger and dividable by 16 then center crop
             crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16)
             self.resize = dali.ops.Resize(
-                device="gpu",
-                interp_type=dali.types.INTERP_TRIANGULAR,
-                resize_shorter=crop_size,
+                device="gpu", interp_type=dali.types.INTERP_TRIANGULAR, resize_shorter=crop_size,
             )
 
-        self.ctwist = dali.ops.ColorTwist(device="gpu")
+        self.color_twist = dali.ops.ColorTwist(device="gpu")
         self.jitter = dali.ops.Jitter(device="gpu")
         self.normalize = dali.ops.CropMirrorNormalize(
             device="gpu",
@@ -65,6 +64,7 @@ class HybridPipe(dali.pipeline.Pipeline):
         self.rng3 = dali.ops.Uniform(range=[-15, 15])
         self.train = train
         self.dali_cpu = dali_cpu
+        self.ctwist = ctwist
 
     def define_graph(self):
         # Read images and labels
@@ -76,9 +76,9 @@ class HybridPipe(dali.pipeline.Pipeline):
         if self.dali_cpu:
             images = images.gpu()
         if self.train:
-            if cfg.FLAGS.ctwist:
+            if self.ctwist:
                 # always improves quiality slightly
-                images = self.ctwist(
+                images = self.color_twist(
                     images,
                     saturation=self.rng2(),
                     contrast=self.rng2(),
@@ -95,30 +95,23 @@ class HybridPipe(dali.pipeline.Pipeline):
         return images, labels.gpu()
 
 
-class DALIWrapper:
+class DaliLoader:
     """Wrap dali to look like torch dataloader"""
 
-    def __init__(self, loader):
-        self.loader = loader
+    def __init__(self, train=False, bs=32, workers=4, sz=224, ctwist=True, min_area=0.08):
+        """Returns train or val iterator over Imagenet data"""
+        pipe = HybridPipe(train=train, bs=bs, workers=workers, sz=sz, ctwist=ctwist, min_area=min_area)
+        pipe.build()
+        self.loader = DALIClassificationIterator(
+            pipe,
+            size=pipe.epoch_size("Reader") / env_world_size(),
+            auto_reset=True,
+            fill_last_batch=train,  # want real accuracy on validiation
+            last_batch_padded=True,  # want epochs to have the same length
+        )
 
     def __len__(self):
         return self.loader._size // self.loader.batch_size
 
     def __iter__(self):
-        return (
-            (batch[0]["data"], batch[0]["label"].squeeze().long()) for batch in self.loader
-        )
-
-
-def get_loader(train):
-    """Returns train or val iterator over Imagenet data"""
-    pipe = HybridPipe(train=train)
-    pipe.build()
-    loader = DALIClassificationIterator(
-        pipe,
-        size=pipe.epoch_size("Reader") / cfg.FLAGS.world_size,
-        auto_reset=True,
-        fill_last_batch=train,  # want real accuracy on validiation
-        last_batch_padded=True,  # want epochs to have the same length
-    )
-    return DALIWrapper(loader)
+        return ((batch[0]["data"], batch[0]["label"].squeeze().long()) for batch in self.loader)
