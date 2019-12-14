@@ -52,7 +52,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="PyTorch ImageNet Training",
         default_config_files=["configs/base.yaml"],
-        args_for_setting_config_path=["-c"],
+        args_for_setting_config_path=["-c", "--config_file"],
         config_file_parser_class=argparse.YAMLConfigFileParser,
     )
     add_arg = parser.add_argument
@@ -64,7 +64,7 @@ def parse_args():
         choices=model_names,
         help="model architecture: " + " | ".join(model_names) + " (default: resnet18)",
     )
-    add_arg("--model-params", type=eval, default={}, help="Additional model params as kwargs")
+    add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
     add_arg("--pretrained", dest="pretrained", action="store_true", help="use pre-trained model")
     add_arg(
         "--phases",
@@ -82,12 +82,12 @@ def parse_args():
         help="number of data loading workers (default: 4)",
     )
     add_arg(
-        "--start-epoch", default=0, type=int, metavar="N", help="manual epoch number (useful on restarts)",
+        "--start_epoch", default=0, type=int, metavar="N", help="manual epoch number (useful on restarts)",
     )
     add_arg(
-        "--weight-decay", "--wd", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)",
+        "--weight_decay", "--wd", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)",
     )
-    add_arg("--no-bn-wd", action="store_true", help="Remove batch norm from weight decay")
+    add_arg("--no_bn_wd", action="store_true", help="Remove batch norm from weight decay")
     add_arg(
         "--mixup", type=float, default=0, help="Alpha for mixup augmentation. If 0 then mixup is diabled",
     )
@@ -126,21 +126,24 @@ def parse_args():
         dest="name",
         help="Name of this run. If empty it would be a timestamp",
     )
-    add_arg("--short-epoch", action="store_true", help="make epochs short (for debugging)")
+    add_arg("--short_epoch", action="store_true", help="make epochs short (for debugging)")
     add_arg(
         "--optim",
         type=str,
         default="SGD",  # choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
         help="Optimizer to use (default: sgd)",
     )
-    add_arg("--optim-params", type=eval, default={}, help="Additional optimizer params as kwargs")
+    add_arg("--optim_params", type=eval, default={}, help="Additional optimizer params as kwargs")
     add_arg("--deterministic", action="store_true")
     add_arg(
         "--lookahead", action="store_true", help="Flag to wrap optimizer with Lookahead wrapper",
     )
     add_arg("--sz", type=int, default=224)
     add_arg("--bs", type=int, default=256)
-    add_arg("--min-area", type=int, default=0.08)
+    add_arg("--min_area", type=float, default=0.08)
+    add_arg("--distributed")
+    add_arg("--is_master")
+    add_arg("--world_size")
     args = parser.parse_args()
     # detect distributed
     args.world_size = pt.utils.misc.env_world_size()
@@ -162,7 +165,7 @@ if FLAGS.deterministic:
 # save script and configs so we can reproduce from logs
 OUTDIR = os.path.join(FLAGS.logdir, FLAGS.name)
 os.makedirs(OUTDIR, exist_ok=True)
-shutil.copy2(os.path.realpath(__file__), "{}".format(OUTDIR))
+shutil.copy2(os.path.realpath(__file__), f"{OUTDIR}")
 
 yaml.dump(vars(FLAGS), open(OUTDIR + '/config.yaml', 'w'), default_flow_style=None)
 log = FileLogger(OUTDIR, is_master=FLAGS.is_master)
@@ -178,10 +181,10 @@ def main():
 
     log.console("Loading model")
     if FLAGS.pretrained:
-        print("=> using pre-trained model '{}'".format(FLAGS.arch))
+        print(f"=> using pre-trained model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](pretrained="imagenet", **FLAGS.model_params)
     else:
-        print("=> creating model '{}'".format(FLAGS.arch))
+        print(f"=> creating model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     model = model.cuda()
 
@@ -283,7 +286,7 @@ class DaliDataManager:
             self.stage_len = self.tot_epochs - stage["ep"]
 
     def _set_data(self, phase):
-        log.event("Dataset changed.\nImage size: {}\nBatch size: {}".format(phase["sz"], phase["bs"]))
+        log.event(f"Dataset changed.\nImage size: {phase['sz']}\nBatch size: {phase['bs']}")
         # tb.log_size(phase['bs'], phase['sz'])
         if getattr(self, "trn_dl", None):
             # remove if exist. prevents DALI errors
@@ -346,11 +349,11 @@ class DistributedLogger(Logger):
         self.runner._val_metrics[0].avg = val_l
         self.runner._val_metrics[1][0].avg = val_acc1
         self.runner._val_metrics[1][1].avg = val_acc5
-
-        trn_str = "Train       loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}".format(trn_l, trn_acc1, trn_acc5)
-        self.logger.info(trn_str)
         self.logger.info(
-            "Val reduced loss: {:.4f} | Acc@1 {:.4f} | Acc@5 {:.4f}".format(val_l, val_acc1, val_acc5)
+            f"Train       loss: {trn_l:.4f} | Acc@1 {trn_acc1:.4f} | Acc@5 {trn_acc5:.4f}"
+        )
+        self.logger.info(
+            f"Val reduced loss: {val_l:.4f} | Acc@1 {val_acc1:.4f} | Acc@5 {val_acc5:.4f}"
         )
 
 
@@ -363,8 +366,8 @@ if __name__ == "__main__":
         # print('Distributed')
         metrics = torch.tensor([acc1, acc5]).float().cuda()
         acc1, acc5 = pt.utils.misc.reduce_tensor(metrics).cpu().numpy()
-    # print("Before reduce at {}: Acc@1 {:.3f} Acc@5 {:.3f}".format(FLAGS.local_rank, res[0], res[1]))
+    # print(f"Before reduce at {FLAGS.local_rank}: Acc@1 {res[0]:.3f} Acc@5 {res[1]:.3f}")
     if FLAGS.is_master:
-        log.console("Acc@1 {:.3f} Acc@5 {:.3f}".format(acc1, acc5))
+        log.console(f"Acc@1 {acc1:.3f} Acc@5 {acc5:.3f}")
         m = (time.time() - start_time) / 60
-        log.console("Total time: {}h {:.1f}m".format(int(m / 60), m % 60))
+        log.console(f"Total time: {int(m / 60)}h {m % 60:.1f}m")

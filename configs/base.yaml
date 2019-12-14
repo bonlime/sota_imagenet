@@ -1,4 +1,4 @@
-no-bn-wd : true
+no_bn_wd : true
 opt_level : O1
 optim : fused_sgd
 deterministic : true
