@@ -94,6 +94,7 @@ def parse_args():
     add_arg(
         "--cutmix", type=float, default=0, help="Alpha for cutmix augmentation. If 0 then cutmix is diabled",
     )
+    add_arg("--cutmix_prob", type=float, default=0.5)
     add_arg("--smooth", action="store_true", help="Use label smoothing")
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
     add_arg(
@@ -144,6 +145,7 @@ def parse_args():
     add_arg("--distributed")
     add_arg("--is_master")
     add_arg("--world_size")
+    add_arg("--sigmoid", action='store_true', help='Use sigmoid instead of softmax')
     args = parser.parse_args()
     # detect distributed
     args.world_size = pt.utils.misc.env_world_size()
@@ -193,7 +195,11 @@ def main():
     # define loss function (criterion) and optimizer
     # it's a good idea to use smooth with mixup but don't force it
     # FLAGS.smooth = FLAGS.smooth or FLAGS.mixup
-    criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if FLAGS.smooth else 0.0).cuda()
+    if FLAGS.sigmoid:
+        # use reduction sum just to have bigger numbers in logs
+        criterion = torch.nn.MultiLabelSoftMarginLoss(reduction='sum').cuda()
+    else:
+        criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if FLAGS.smooth else 0.0).cuda()
     # start with 0 lr. Scheduler will change this later
     optimizer = optimizer_from_name(FLAGS.optim)(
         optim_params, lr=0, weight_decay=FLAGS.weight_decay, **FLAGS.optim_params
@@ -321,9 +327,10 @@ class DaliDataManager:
         val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
 
         if FLAGS.cutmix != 0:
-            trn_loader = CutMixWrapper(FLAGS.cutmix, 1000, trn_loader)
+            trn_loader = CutMixWrapper(FLAGS.cutmix, 1000, trn_loader, FLAGS.cutmix_prob)
         if FLAGS.mixup != 0:
             trn_loader = MixUpWrapper(FLAGS.mixup, 1000, trn_loader)
+        val_loader = CutMixWrapper(1, 1000, val_loader, prob=0)  # to make one-hot
         return trn_loader, val_loader
 
 
