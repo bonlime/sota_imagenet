@@ -1,0 +1,15 @@
+name : resnet34_sigm
+arch : resnet34
+model_params : {"deep_stem": true,"antialias": true}
+weight_decay : 3e-5
+cutmix : 1.0
+cutmix_prob : 0 # only want to turn it one-hot
+sigmoid : True
+ctwist : True
+lookahead : True
+# short-epoch : True
+phases : [
+    {"ep": 0,  "sz": 224, "bs": 256}, 
+    {"ep": [0, 5], "lr": [0, 0.5], "mom": 0.9, "mode": "cos"},
+    {"ep": [5, 60], "lr": [0.5, 0], "mode": "cos"},
+]
