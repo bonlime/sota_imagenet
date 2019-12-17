@@ -1,3 +1,4 @@
+# gives Acc@1 73.978 Acc@5 91.232
 name : resnet34_sigm
 arch : resnet34
 model_params : {"deep_stem": true,"antialias": true}
