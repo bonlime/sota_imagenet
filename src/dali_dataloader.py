@@ -11,7 +11,7 @@ class HybridPipe(dali.pipeline.Pipeline):
     def __init__(self, train=False, bs=32, workers=4, sz=224, ctwist=True, dali_cpu=False, min_area=0.08):
 
         local_rank, world_size = env_rank(), env_world_size()
-        super(HybridPipe, self).__init__(bs, workers, local_rank)
+        super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
         data_dir = DATA_DIR + "320/" if sz < 224 and train else DATA_DIR + "raw-data/"
         data_dir += "train/" if train else "validation/"
         # only shuffle train data
