@@ -1,0 +1,12 @@
+# config identical to one stated in the Novograd paper
+# betas from author email
+name : resnet50_novograd
+arch : resnet50
+weight_decay : 0.002
+optim : fused_novograd
+optim_param: {"betas": [0.95, 0.98], "grad_averaging": false, "reg_inside_moment": true}
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 5], "lr": [0, 0.07]}, # warmup
+    {"ep": [5, 90], "lr": [0.07, 0], "mode": "cos"},
+]

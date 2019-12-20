@@ -1,0 +1,10 @@
+# config close to one in Nvidia/DeepLearning examples. 
+name : resnext101_32x4d_baseline
+arch : resnext101_32x4d
+weight_decay : 6e-5
+smooth: true
+phases : [
+    {"ep": 0, "sz": 224, "bs": 128},
+    {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+    {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
+]
