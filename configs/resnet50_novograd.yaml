@@ -1,5 +1,7 @@
 # config identical to one stated in the Novograd paper
 # betas from author email
+# gives Acc@1 71.210 Acc@5 90.342
+# the results are pretty bad. need more investigation
 name : resnet50_novograd
 arch : resnet50
 weight_decay : 0.002

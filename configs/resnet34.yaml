@@ -1,3 +1,5 @@
+# config obtained by fine-tuning hyperparams
+# gives Acc@1 75.768 Acc@5 92.756
 name : resnet34
 arch : resnet34
 model_params : {"deep_stem": true,"antialias": true}
