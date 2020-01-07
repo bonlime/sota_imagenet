@@ -1,0 +1,16 @@
+# config close to best config for resnet34
+# gives Acc@1 78.988 Acc@5 94.440
+# Total time: 14h 16.3m
+name : se_resnet50_better
+arch : se_resnet50
+model_params : {"deep_stem": true,"antialias": true}
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: true
+ctwist : True
+lookahead : True
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+    {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
+]

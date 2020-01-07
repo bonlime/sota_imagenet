@@ -1,0 +1,17 @@
+# config close to best config for resnet34
+# Training is 3 times slower than for se_resnet50.
+# it's unacceptable, so didn't train it
+
+# name : se_resnext50_better
+# arch : resnext50_32x4d
+# model_params : {"deep_stem": true, "antialias": true}
+# weight_decay : 3e-5
+# cutmix : 1.0
+# smooth: true
+# ctwist : True
+# lookahead : True
+# phases : [
+#     {"ep": 0, "sz": 224, "bs": 128},
+#     {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+#     {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
+# ]

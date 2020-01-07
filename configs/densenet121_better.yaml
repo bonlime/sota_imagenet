@@ -1,0 +1,17 @@
+# gives Acc@1 72.866 Acc@5 91.398
+# regularization is too strong, network can't learn 
+name : densenet121_baseline
+arch : densenet121
+# memory_efficient makes it faster. disable if OOM
+model_params : {"deep_stem": true, "memory_efficient": False}
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: true
+ctwist : True
+lookahead : True
+optim_param : {"nesterov": True, "momentum": 0.9}
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+    {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
+]

@@ -1,0 +1,18 @@
+# config close to config from the paper. lr is 4x times bigger because training is on 4 GPUS
+# gives Acc@1 74.760 Acc@5 92.184
+name : densenet121_baseline
+arch : densenet121
+weight_decay : 1e-4
+no_bn_wd : False
+optim_param : {"nesterov": True, "momentum": 0.9}
+# makes it faster. disable if OOM
+model_param : {"memory_efficient": False}
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    # a little warmup to stabilize training
+    {"ep": [0, 5], "lr": [0,0.2], "mom": 0.9},
+    {"ep": 5,  "lr":   0.2},
+    {"ep": 30, "lr":  0.02},
+    {"ep": 60, "lr": 0.002},
+    {"ep": 90, "lr": 0.002},
+]

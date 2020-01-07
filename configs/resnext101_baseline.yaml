@@ -1,4 +1,5 @@
 # config close to one in Nvidia/DeepLearning examples. 
+# training is slow. didn't train it
 name : resnext101_32x4d_baseline
 arch : resnext101_32x4d
 weight_decay : 6e-5

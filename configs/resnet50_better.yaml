@@ -1,0 +1,18 @@
+# config close to best config for resnet34
+# gives Acc@1 77.820 Acc@5 93.90
+# but maybe can get the same results in 90 epochs
+name : resnet50_better
+arch : resnet50
+model_params : {"deep_stem": true,"antialias": true}
+weight_decay : 3e-5
+cutmix : 1.0
+ctwist : True
+lookahead : True
+phases : [
+    {"ep": 0, "sz": 128, "bs": 256}, 
+    {"ep": 60, "sz": 192, "bs": 256}, 
+    {"ep": 120, "sz": 224, "bs": 256}, 
+    {"ep": 180, "sz": 224, "bs": 256, "min_area": 0.2, "cutmix": 0.0, "ctwist": false},
+    {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+    {"ep": [8, 200], "lr": [1.0, 0], "mode": "cos"},
+]

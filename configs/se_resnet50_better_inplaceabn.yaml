@@ -1,0 +1,17 @@
+# config close to best config for se_resnet50_better
+# but with inplaceabn
+# Acc@1 79.050 Acc@5 94.540
+# Total time: 16h 27.2m
+name : se_resnet50_better_inplace
+arch : se_resnet50
+model_params : {"deep_stem": true,"antialias": true, "norm_layer": "inplaceabn", "norm_act": "leaky_relu"}
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: true
+ctwist : True
+lookahead : True
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+    {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
+]

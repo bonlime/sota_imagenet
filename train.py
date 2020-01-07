@@ -20,8 +20,13 @@ import torch.distributed as dist
 
 import pytorch_tools.models as models
 import pytorch_tools as pt
-from pytorch_tools.fit_wrapper.callbacks import Logger
+
+from pytorch_tools.fit_wrapper.callbacks import Timer
+from pytorch_tools.fit_wrapper.callbacks import Mixup
+from pytorch_tools.fit_wrapper.callbacks import Cutmix
 from pytorch_tools.fit_wrapper.callbacks import TensorBoard
+from pytorch_tools.fit_wrapper.callbacks import FileLogger as FileLoggerClb
+from pytorch_tools.fit_wrapper.callbacks import ConsoleLogger
 from pytorch_tools.fit_wrapper.callbacks import CheckpointSaver
 from pytorch_tools.fit_wrapper.callbacks import PhasesScheduler
 from pytorch_tools.fit_wrapper.callbacks import Callback as NoClbk
@@ -35,11 +40,7 @@ from apex.parallel import DistributedDataParallel as DDP
 import copy
 
 from src.dali_dataloader import DaliLoader
-from src.experimental_utils import bnwd_optim_params
 from src.logger import FileLogger
-from src.mixup import MixUpWrapper
-from src.cutmix import CutMixWrapper
-
 
 def parse_args():
 
@@ -189,8 +190,7 @@ def main():
         print(f"=> creating model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     model = model.cuda()
-
-    optim_params = bnwd_optim_params(model) if FLAGS.no_bn_wd else model.parameters()
+    optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
 
     # define loss function (criterion) and optimizer
     # it's a good idea to use smooth with mixup but don't force it
@@ -236,7 +236,7 @@ def main():
         min_loss_scale=1.0,
         verbosity=0,
     )
-    logger_clb = Logger(OUTDIR, logger=log.logger)
+    logger_clb = FileLoggerClb(OUTDIR, logger=log.logger)
     if FLAGS.distributed:
         model = DDP(model, delay_allreduce=True)
         logger_clb = DistributedLogger(OUTDIR, logger=log.logger)
@@ -245,18 +245,26 @@ def main():
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
     dm = DaliDataManager(FLAGS.phases)  # + FLAGS.start_epoch here
 
+    # common callbacks
+    callbacks = [
+        PhasesScheduler([copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
+        logger_clb,
+        Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
+        Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
+    ]
+    if FLAGS.is_master:  # callback for master process
+        callbacks.extend([
+            Timer(),
+            ConsoleLogger(),
+            TensorBoard(OUTDIR, log_every=25),
+            CheckpointSaver(OUTDIR, save_name="model.chpn")
+        ])
     runner = pt.fit_wrapper.Runner(
         model,
         optimizer,
         criterion,
-        verbose=FLAGS.is_master,
         metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
-        callbacks=[
-            PhasesScheduler(optimizer, [copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
-            logger_clb,
-            TensorBoard(OUTDIR, log_every=25) if FLAGS.is_master else NoClbk(),
-            CheckpointSaver(OUTDIR, save_name="model.chpn") if FLAGS.is_master else NoClbk(),
-        ],
+        callbacks=callbacks
     )
     if FLAGS.evaluate:
         dm.set_stage(0)
@@ -268,11 +276,11 @@ def main():
             dm.trn_dl,
             steps_per_epoch=(None, 10)[FLAGS.short_epoch],
             val_loader=dm.val_dl,
-            val_steps=(None, 10)[FLAGS.short_epoch],
+            val_steps=(None, 20)[FLAGS.short_epoch],
             epochs=dm.stage_len + dm.stages[idx]["ep"],
             start_epoch=dm.stages[idx]["ep"],
         )
-    return runner._val_metrics[0].avg, [m.avg for m in runner._val_metrics[1]]
+    return runner.state.val_loss.avg, [m.avg for m in runner.state.val_metrics]
 
 
 class DaliDataManager:
@@ -325,37 +333,33 @@ class DaliDataManager:
         trn_loader = DaliLoader(True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
         FLAGS.bs = val_bs
         val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
-
-        if FLAGS.cutmix != 0:
-            trn_loader = CutMixWrapper(FLAGS.cutmix, 1000, trn_loader, FLAGS.cutmix_prob)
-        if FLAGS.mixup != 0:
-            trn_loader = MixUpWrapper(FLAGS.mixup, 1000, trn_loader)
-        val_loader = CutMixWrapper(1, 1000, val_loader, prob=0)  # to make one-hot
         return trn_loader, val_loader
 
 
-class DistributedLogger(Logger):
+class DistributedLogger(FileLoggerClb):
     """Reduces metrics before printing"""
 
     def on_epoch_end(self):
-        trn_l = self.runner._train_metrics[0].avg
-        trn_acc1, trn_acc5 = (m.avg for m in self.runner._train_metrics[1])
+        trn_loss = self.state.train_loss.avg
+        trn_acc1, trn_acc5 = (m.avg for m in self.state.train_metrics)
 
-        val_l = self.runner._val_metrics[0].avg
-        val_acc1, val_acc5 = (m.avg for m in self.runner._val_metrics[1])
+        val_loss = self.state.val_loss.avg
+        val_acc1, val_acc5 = (m.avg for m in self.state.val_metrics)
 
-        tensor = torch.tensor([trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5]).float().cuda()
+        tensor = torch.tensor(
+            [trn_loss, trn_acc1, trn_acc5, val_loss, val_acc1, val_acc5]
+        ).float().cuda()
         trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = (
             pt.utils.misc.reduce_tensor(tensor).cpu().numpy()
         )
 
         # replace with reduced metrics. it's dirty but works
-        self.runner._train_metrics[0].avg = trn_l
-        self.runner._train_metrics[1][0].avg = trn_acc1
-        self.runner._train_metrics[1][1].avg = trn_acc5
-        self.runner._val_metrics[0].avg = val_l
-        self.runner._val_metrics[1][0].avg = val_acc1
-        self.runner._val_metrics[1][1].avg = val_acc5
+        self.state.train_loss.avg = trn_l
+        self.state.train_metrics[0].avg = trn_acc1
+        self.state.train_metrics[1].avg = trn_acc5
+        self.state.val_loss.avg = val_l
+        self.state.val_metrics[0].avg = val_acc1
+        self.state.val_metrics[1].avg = val_acc5
         self.logger.info(
             f"Train       loss: {trn_l:.4f} | Acc@1 {trn_acc1:.4f} | Acc@5 {trn_acc5:.4f}"
         )
