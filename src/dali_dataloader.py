@@ -111,7 +111,7 @@ class DaliLoader:
         )
 
     def __len__(self):
-        return self.loader._size // self.loader.batch_size
+        return math.ceil(self.loader._size / self.loader.batch_size)
 
     def __iter__(self):
         return ((batch[0]["data"], batch[0]["label"].squeeze().long()) for batch in self.loader)

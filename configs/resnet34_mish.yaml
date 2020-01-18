@@ -1,0 +1,16 @@
+# same config as for resnet34 but with mish activation
+name : resnet34_mish
+arch : resnet34
+model_params : {"deep_stem": true,"antialias": true, "norm_act": "mish"}
+weight_decay : 3e-5
+cutmix : 1.0
+ctwist : True
+lookahead : True
+# short-epoch : True
+phases : [
+    {"ep": 0, "sz": 128, "bs": 256}, 
+    {"ep": 60, "sz": 192, "bs": 256}, 
+    {"ep": 120, "sz": 224, "bs": 256}, 
+    {"ep": 180, "sz": 224, "bs": 256, "min_area": 0.2, "cutmix": 0.0, "ctwist": false},
+    {"ep": [0, 200], "lr": [0.5, 0], "mom": 0.9, "mode": "cos"},
+]
