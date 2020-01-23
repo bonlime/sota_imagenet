@@ -1,0 +1,12 @@
+# config close to the one from Bag of tricks paper
+name : resnet50_bag_of_tricks
+arch : resnet50
+model_params : {"deep_stem": true}
+weight_decay : 1e-4
+mixup: 0.2
+smooth: True
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256}, 
+    {"ep": [0, 5], "lr": [0, 0.4], "mom": 0.9},
+    {"ep": [5, 120], "lr": [0.4, 0], "mode": "cos"},
+]
