@@ -1,16 +1,17 @@
-# gives Acc@1 73.978 Acc@5 91.232
+# Acc@1 76.268 Acc@5 92.646
+# Total time: 10h 57.6m
 name : resnet34_sigm
 arch : resnet34
 model_params : {"deep_stem": true,"antialias": true}
 weight_decay : 3e-5
 cutmix : 1.0
-cutmix_prob : 0 # only want to turn it one-hot
 sigmoid : True
 ctwist : True
 lookahead : True
-# short-epoch : True
 phases : [
-    {"ep": 0,  "sz": 224, "bs": 256}, 
-    {"ep": [0, 5], "lr": [0, 0.5], "mom": 0.9, "mode": "cos"},
-    {"ep": [5, 60], "lr": [0.5, 0], "mode": "cos"},
+    {"ep": 0, "sz": 128, "bs": 256}, 
+    {"ep": 60, "sz": 192, "bs": 256}, 
+    {"ep": 120, "sz": 224, "bs": 256}, 
+    {"ep": 180, "sz": 224, "bs": 256, "min_area": 0.2, "cutmix": 0.0, "ctwist": false},
+    {"ep": [0, 200], "lr": [0.5, 0], "mom": 0.9, "mode": "cos"},
 ]
