@@ -1,8 +1,8 @@
 """Dali dataloader for imagenet"""
+import math
 from nvidia import dali
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 from pytorch_tools.utils.misc import env_rank, env_world_size
-import math
 
 DATA_DIR = "data/"
 

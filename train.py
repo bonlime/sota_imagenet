@@ -1,16 +1,16 @@
 import os
-import shutil
-import time
-
-# import argparse
-import configargparse as argparse
-import warnings
-import math
-from datetime import datetime
-from pathlib import Path
 import sys
-import json
 import yaml
+import copy
+import math
+import json
+import time
+import shutil
+import warnings
+from pathlib import Path
+from loguru import logger
+from datetime import datetime
+import configargparse as argparse
 
 import torch
 import torch.nn as nn
@@ -18,29 +18,19 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.distributed as dist
 
-import pytorch_tools.models as models
-import pytorch_tools as pt
+# for fp16
+from apex import amp
+from apex.parallel import DistributedDataParallel as DDP
 
-from pytorch_tools.fit_wrapper.callbacks import Timer
-from pytorch_tools.fit_wrapper.callbacks import Mixup
-from pytorch_tools.fit_wrapper.callbacks import Cutmix
-from pytorch_tools.fit_wrapper.callbacks import TensorBoard
-from pytorch_tools.fit_wrapper.callbacks import FileLogger as FileLoggerClb
-from pytorch_tools.fit_wrapper.callbacks import ConsoleLogger
-from pytorch_tools.fit_wrapper.callbacks import CheckpointSaver
-from pytorch_tools.fit_wrapper.callbacks import PhasesScheduler
+import pytorch_tools as pt
+import pytorch_tools.models as models
+import pytorch_tools.fit_wrapper.callbacks as pt_clb
 from pytorch_tools.fit_wrapper.callbacks import Callback as NoClbk
 
 from pytorch_tools.utils.misc import listify
 from pytorch_tools.optim import optimizer_from_name
 
-# for fp16
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
-import copy
-
 from src.dali_dataloader import DaliLoader
-from src.logger import FileLogger
 
 def parse_args():
 
@@ -171,23 +161,35 @@ os.makedirs(OUTDIR, exist_ok=True)
 shutil.copy2(os.path.realpath(__file__), f"{OUTDIR}")
 
 yaml.dump(vars(FLAGS), open(OUTDIR + '/config.yaml', 'w'), default_flow_style=None)
-log = FileLogger(OUTDIR, is_master=FLAGS.is_master)
+# setup logger
+if FLAGS.is_master:
+    config = {
+        "handlers": [ 
+            {"sink": sys.stdout, "format": "{time:[MM-DD HH:mm:ss]} - {message}"},
+            {"sink": f"{OUTDIR}/logs.txt", "format": "{time:[MM-DD HH:mm:ss]} - {message}"},
+        ],
+    }
+    logger.configure(**config)
+else:
+    logger.configure(handlers=[])
+# logger.info(FLAGS)
+# log = FileLogger(OUTDIR, is_master=FLAGS.is_master)
 
 
 def main():
-    log.console(FLAGS)
+    logger.info(FLAGS)
 
     if FLAGS.distributed:
-        log.console("Distributed initializing process group")
+        logger.info("Distributed initializing process group")
         torch.cuda.set_device(FLAGS.local_rank)
         dist.init_process_group(backend="nccl", init_method="env://", world_size=FLAGS.world_size)
 
-    log.console("Loading model")
+    logger.info("Loading model")
     if FLAGS.pretrained:
-        print(f"=> using pre-trained model '{FLAGS.arch}'")
+        logger.info(f"=> using pre-trained model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](pretrained="imagenet", **FLAGS.model_params)
     else:
-        print(f"=> creating model '{FLAGS.arch}'")
+        logger.info(f"=> creating model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     model = model.cuda()
     optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
@@ -222,7 +224,7 @@ def main():
         try:
             optimizer.load_state_dict(checkpoint["optimizer"])
         except ValueError:  # may raise an error if another optimzer was used
-            print("Failed to load state dict into optimizer")
+            logger.info("Failed to load state dict into optimizer")
 
     if FLAGS.lookahead:
         optimizer = pt.optim.Lookahead(optimizer)
@@ -236,10 +238,10 @@ def main():
         min_loss_scale=1.0,
         verbosity=0,
     )
-    logger_clb = FileLoggerClb(OUTDIR, logger=log.logger)
+    logger_clb = pt_clb.FileLogger(OUTDIR, logger=logger)
     if FLAGS.distributed:
         model = DDP(model, delay_allreduce=True)
-        logger_clb = DistributedLogger(OUTDIR, logger=log.logger)
+        logger_clb = DistributedLogger(OUTDIR, logger=logger)
 
     # data phases are parsed from start and shedule phases are parsed from the end
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
@@ -247,17 +249,17 @@ def main():
 
     # common callbacks
     callbacks = [
-        PhasesScheduler([copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
+        pt_clb.PhasesScheduler([copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
         logger_clb,
-        Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
-        Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
+        pt_clb.Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
+        pt_clb.Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
     ]
     if FLAGS.is_master:  # callback for master process
         callbacks.extend([
-            Timer(),
-            ConsoleLogger(),
-            TensorBoard(OUTDIR, log_every=25),
-            CheckpointSaver(OUTDIR, save_name="model.chpn")
+            pt_clb.Timer(),
+            pt_clb.ConsoleLogger(),
+            pt_clb.TensorBoard(OUTDIR, log_every=25),
+            pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn")
         ])
     runner = pt.fit_wrapper.Runner(
         model,
@@ -300,7 +302,7 @@ class DaliDataManager:
             self.stage_len = self.tot_epochs - stage["ep"]
 
     def _set_data(self, phase):
-        log.event(f"Dataset changed.\nImage size: {phase['sz']}\nBatch size: {phase['bs']}")
+        logger.info(f"Dataset changed.\nImage size: {phase['sz']}\nBatch size: {phase['bs']}")
         # tb.log_size(phase['bs'], phase['sz'])
         if getattr(self, "trn_dl", None):
             # remove if exist. prevents DALI errors
@@ -336,7 +338,7 @@ class DaliDataManager:
         return trn_loader, val_loader
 
 
-class DistributedLogger(FileLoggerClb):
+class DistributedLogger(pt_clb.FileLogger):
     """Reduces metrics before printing"""
 
     def on_epoch_end(self):
@@ -374,11 +376,9 @@ if __name__ == "__main__":
     acc1, acc5 = res[0], res[1]
     # need to calculate mean of val metrics between processes, because each validated on different images
     if FLAGS.distributed:
-        # print('Distributed')
         metrics = torch.tensor([acc1, acc5]).float().cuda()
         acc1, acc5 = pt.utils.misc.reduce_tensor(metrics).cpu().numpy()
-    # print(f"Before reduce at {FLAGS.local_rank}: Acc@1 {res[0]:.3f} Acc@5 {res[1]:.3f}")
     if FLAGS.is_master:
-        log.console(f"Acc@1 {acc1:.3f} Acc@5 {acc5:.3f}")
+        logger.info(f"Acc@1 {acc1:.3f} Acc@5 {acc5:.3f}")
         m = (time.time() - start_time) / 60
-        log.console(f"Total time: {int(m / 60)}h {m % 60:.1f}m")
+        logger.info(f"Total time: {int(m / 60)}h {m % 60:.1f}m")

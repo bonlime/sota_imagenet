@@ -1,5 +1,7 @@
 # config close to one in Nvidia/DeepLearning examples. the results are the same 
-# gives Acc@1 77.100 Acc@5 93.476
+# gives Acc@1 77.230 Acc@5 93.654 on v0.1.4
+# Total time: 10h 41.7m (4 x V100)
+
 name : resnet50_baseline
 arch : resnet50
 weight_decay : 3e-5
