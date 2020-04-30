@@ -287,7 +287,7 @@
 
 
 #  python3 -m torch.distributed.launch --nproc_per_node=4 train_new.py -a resnet34 --opt_level O1 --load-phases --no-bn-wd -n resnet34_1phase --optim fused_sgd --wd 1e-5 --lookahead --smooth --mixup 0.2 --ctwist --model-params "{'deep_stem':True, 'antialias':True}"
-# 
+#
 lr = 0.5
 bs = 256
 LOADED_PHASES = [
@@ -296,7 +296,7 @@ LOADED_PHASES = [
     {"ep": [5, 200], "lr": [lr, 0], "mode": "cos"},
     {"ep": 60, "sz": 192, "bs": bs},
     {"ep": 120, "sz": 224, "bs": bs},
-    {"ep": 180, "sz": 224, "bs": bs, 'min_area': 0.2, 'cutmix': 0., 'ctwist': False},
+    {"ep": 180, "sz": 224, "bs": bs, "min_area": 0.2, "cutmix": 0.0, "ctwist": False},
 ]
 
 

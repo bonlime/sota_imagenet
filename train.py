@@ -32,6 +32,7 @@ from pytorch_tools.optim import optimizer_from_name
 
 from src.dali_dataloader import DaliLoader
 
+
 def parse_args():
 
     model_names = sorted(
@@ -60,7 +61,7 @@ def parse_args():
     add_arg(
         "--phases",
         type=eval,
-        action='append',
+        action="append",
         help="Specify epoch order of data resize and learning rate schedule:"
         '[{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]',
     )
@@ -136,7 +137,7 @@ def parse_args():
     add_arg("--distributed")
     add_arg("--is_master")
     add_arg("--world_size")
-    add_arg("--sigmoid", action='store_true', help='Use sigmoid instead of softmax')
+    add_arg("--sigmoid", action="store_true", help="Use sigmoid instead of softmax")
     args = parser.parse_args()
     # detect distributed
     args.world_size = pt.utils.misc.env_world_size()
@@ -160,11 +161,11 @@ OUTDIR = os.path.join(FLAGS.logdir, FLAGS.name)
 os.makedirs(OUTDIR, exist_ok=True)
 shutil.copy2(os.path.realpath(__file__), f"{OUTDIR}")
 
-yaml.dump(vars(FLAGS), open(OUTDIR + '/config.yaml', 'w'), default_flow_style=None)
+yaml.dump(vars(FLAGS), open(OUTDIR + "/config.yaml", "w"), default_flow_style=None)
 # setup logger
 if FLAGS.is_master:
     config = {
-        "handlers": [ 
+        "handlers": [
             {"sink": sys.stdout, "format": "{time:[MM-DD HH:mm:ss]} - {message}"},
             {"sink": f"{OUTDIR}/logs.txt", "format": "{time:[MM-DD HH:mm:ss]} - {message}"},
         ],
@@ -199,7 +200,7 @@ def main():
     # FLAGS.smooth = FLAGS.smooth or FLAGS.mixup
     if FLAGS.sigmoid:
         # use reduction sum just to have bigger numbers in logs
-        criterion = torch.nn.MultiLabelSoftMarginLoss(reduction='sum').cuda()
+        criterion = torch.nn.MultiLabelSoftMarginLoss(reduction="sum").cuda()
     else:
         criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if FLAGS.smooth else 0.0).cuda()
     # start with 0 lr. Scheduler will change this later
@@ -255,18 +256,20 @@ def main():
         pt_clb.Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
     ]
     if FLAGS.is_master:  # callback for master process
-        callbacks.extend([
-            pt_clb.Timer(),
-            pt_clb.ConsoleLogger(),
-            pt_clb.TensorBoard(OUTDIR, log_every=25),
-            pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn")
-        ])
+        callbacks.extend(
+            [
+                pt_clb.Timer(),
+                pt_clb.ConsoleLogger(),
+                pt_clb.TensorBoard(OUTDIR, log_every=25),
+                pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn"),
+            ]
+        )
     runner = pt.fit_wrapper.Runner(
         model,
         optimizer,
         criterion,
         metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
-        callbacks=callbacks
+        callbacks=callbacks,
     )
     if FLAGS.evaluate:
         dm.set_stage(0)
@@ -348,9 +351,7 @@ class DistributedLogger(pt_clb.FileLogger):
         val_loss = self.state.val_loss.avg
         val_acc1, val_acc5 = (m.avg for m in self.state.val_metrics)
 
-        tensor = torch.tensor(
-            [trn_loss, trn_acc1, trn_acc5, val_loss, val_acc1, val_acc5]
-        ).float().cuda()
+        tensor = torch.tensor([trn_loss, trn_acc1, trn_acc5, val_loss, val_acc1, val_acc5]).float().cuda()
         trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = (
             pt.utils.misc.reduce_tensor(tensor).cpu().numpy()
         )
@@ -362,12 +363,8 @@ class DistributedLogger(pt_clb.FileLogger):
         self.state.val_loss.avg = val_l
         self.state.val_metrics[0].avg = val_acc1
         self.state.val_metrics[1].avg = val_acc5
-        self.logger.info(
-            f"Train       loss: {trn_l:.4f} | Acc@1 {trn_acc1:.4f} | Acc@5 {trn_acc5:.4f}"
-        )
-        self.logger.info(
-            f"Val reduced loss: {val_l:.4f} | Acc@1 {val_acc1:.4f} | Acc@5 {val_acc5:.4f}"
-        )
+        self.logger.info(f"Train       loss: {trn_l:.4f} | Acc@1 {trn_acc1:.4f} | Acc@5 {trn_acc5:.4f}")
+        self.logger.info(f"Val reduced loss: {val_l:.4f} | Acc@1 {val_acc1:.4f} | Acc@5 {val_acc5:.4f}")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from pytorch_tools.utils.misc import env_rank, env_world_size
 
 DATA_DIR = "data/"
 
+
 class HybridPipe(Pipeline):
     def __init__(self, train=False, bs=32, workers=4, sz=224, ctwist=True, dali_cpu=False, min_area=0.08):
 
@@ -90,12 +91,8 @@ class HybridPipe(Pipeline):
                 if self.coin03():
                     images = self.rgb2gray(images)
                     images = self.gray2rgb(images)
-                images = self.contrast(
-                    images, contrast=self.rng2(), brightness=self.rng2()
-                )
-                images = self.hsv(
-                    images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2(),
-                )
+                images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
+                images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2(),)
             # images = self.jitter(images, mask=self.coin())
             images = self.normalize(
                 images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1()
