@@ -250,10 +250,8 @@ def main():
         min_loss_scale=1.0,
         verbosity=0,
     )
-    logger_clb = pt_clb.FileLogger(OUTDIR, logger=logger)
     if FLAGS.distributed:
         model = DDP(model, delay_allreduce=True)
-        logger_clb = DistributedLogger(OUTDIR, logger=logger)
 
     # data phases are parsed from start and shedule phases are parsed from the end
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
@@ -262,7 +260,7 @@ def main():
     # common callbacks
     callbacks = [
         pt_clb.PhasesScheduler([copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
-        logger_clb,
+        pt_clb.FileLogger(OUTDIR, logger=logger),
         pt_clb.Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
         pt_clb.Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
     ]
@@ -351,31 +349,6 @@ class DaliDataManager:
         val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
         return trn_loader, val_loader
 
-
-class DistributedLogger(pt_clb.FileLogger):
-    """Reduces metrics before printing"""
-
-    def on_epoch_end(self):
-        trn_loss = self.state.train_loss.avg
-        trn_acc1, trn_acc5 = (m.avg for m in self.state.train_metrics)
-
-        val_loss = self.state.val_loss.avg
-        val_acc1, val_acc5 = (m.avg for m in self.state.val_metrics)
-
-        tensor = torch.tensor([trn_loss, trn_acc1, trn_acc5, val_loss, val_acc1, val_acc5]).float().cuda()
-        trn_l, trn_acc1, trn_acc5, val_l, val_acc1, val_acc5 = (
-            pt.utils.misc.reduce_tensor(tensor).cpu().numpy()
-        )
-
-        # replace with reduced metrics. it's dirty but works
-        self.state.train_loss.avg = trn_l
-        self.state.train_metrics[0].avg = trn_acc1
-        self.state.train_metrics[1].avg = trn_acc5
-        self.state.val_loss.avg = val_l
-        self.state.val_metrics[0].avg = val_acc1
-        self.state.val_metrics[1].avg = val_acc5
-        self.logger.info(f"Train       loss: {trn_l:.4f} | Acc@1 {trn_acc1:.4f} | Acc@5 {trn_acc5:.4f}")
-        self.logger.info(f"Val reduced loss: {val_l:.4f} | Acc@1 {val_acc1:.4f} | Acc@5 {val_acc5:.4f}")
 
 
 if __name__ == "__main__":
