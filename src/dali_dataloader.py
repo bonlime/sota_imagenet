@@ -51,9 +51,6 @@ class HybridPipe(Pipeline):
         # color augs
         self.contrast = ops.BrightnessContrast(device="gpu")
         self.hsv = ops.Hsv(device="gpu")
-        self.rgb2bgr = ops.ColorSpaceConversion(image_type=types.RGB, output_type=types.BGR, device="gpu")
-        self.rgb2gray = ops.ColorSpaceConversion(image_type=types.RGB, output_type=types.GRAY, device="gpu")
-        self.gray2rgb = ops.ColorSpaceConversion(image_type=types.GRAY, output_type=types.RGB, device="gpu")
 
         self.jitter = ops.Jitter(device="gpu")
         self.normalize = ops.CropMirrorNormalize(
@@ -66,7 +63,6 @@ class HybridPipe(Pipeline):
             output_layout=types.NCHW,
         )
         self.coin = ops.CoinFlip()
-        self.coin03 = ops.CoinFlip(probability=0.3)
 
         self.rng1 = ops.Uniform(range=[0, 1])
         self.rng2 = ops.Uniform(range=[0.85, 1.15])
@@ -86,13 +82,8 @@ class HybridPipe(Pipeline):
             images = images.gpu()
         if self.train:
             if self.ctwist:
-                if self.coin03():
-                    images = self.rgb2bgr(images)
-                if self.coin03():
-                    images = self.rgb2gray(images)
-                    images = self.gray2rgb(images)
                 images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
-                images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2(),)
+                images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
             # images = self.jitter(images, mask=self.coin())
             images = self.normalize(
                 images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1()

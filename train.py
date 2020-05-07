@@ -224,7 +224,7 @@ def main():
         FLAGS.start_epoch = checkpoint["epoch"]
         try:
             optimizer.load_state_dict(checkpoint["optimizer"])
-        except ValueError:  # may raise an error if another optimzer was used
+        except:  # may raise an error if another optimzer was used
             logger.info("Failed to load state dict into optimizer")
 
     if FLAGS.lookahead:
