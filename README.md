@@ -37,6 +37,6 @@ $PATH_TO_IMAGENET
 Smaller version of images are used in some configurations to speed up training. You can get them by running `src/resize_imagenet.py`.
 To start training run:
 ```
-docker run --rm -it --shm-size 8G --gpus=all -v $IMAGENET_DIR:/workdir/data/ -v `pwd`/logs/:/workdir/logs bonlime/imagenet:latest python3 -m torch.distributed.launch --nproc_per_node=$NUM_NODES train.py -c configs/resnet50_baseline.yaml
+docker run --rm -it --shm-size 8G --gpus=all -v $IMAGENET_DIR:/workdir/data/:ro -v `pwd`/logs/:/workdir/logs bonlime/imagenet:latest python3 -m torch.distributed.launch --nproc_per_node=$NUM_NODES train.py -c configs/resnet50_baseline.yaml
 ```
 This will train default torchvision version of Resnet50 to results close to `Acc@1 77.100 Acc@5 93.476`

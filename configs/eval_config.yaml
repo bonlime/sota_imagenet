@@ -1,0 +1,12 @@
+name : test_eval
+arch : tresnetxl
+model_params : 
+    pretrained: imagenet
+    norm_layer: frozenabn
+    # deep_stem: true
+    # antialias: true
+evaluate: true
+phases : [
+    {"ep": 0, "sz": 448, "bs": 250},
+    {"ep": [0, 1], "lr": [0, 0], "mom": 0.9},
+]

@@ -134,11 +134,12 @@ def parse_args():
     add_arg("--sz", type=int, default=224)
     add_arg("--bs", type=int, default=256)
     add_arg("--min_area", type=float, default=0.08)
-    add_arg("--distributed")
-    add_arg("--is_master")
-    add_arg("--world_size")
-    add_arg("--sigmoid", action="store_true", help="Use sigmoid instead of softmax")
-    args = parser.parse_args()
+    add_arg("--sigmoid", action='store_true', help='Use sigmoid instead of softmax')
+    add_arg("--no_timestamp", action="store_true", help="Disables adding timestamp to run name")
+    
+    args, not_parsed = parser.parse_known_args()[0]
+    logger.info(f"Not parsed args: {not_parsed}")
+    
     # detect distributed
     args.world_size = pt.utils.misc.env_world_size()
     args.distributed = args.world_size > 1
@@ -146,7 +147,10 @@ def parse_args():
     # Only want master rank logging to tensorboard
     args.is_master = not args.distributed or args.local_rank == 0
     timestamp = pt.utils.misc.get_timestamp()
-    args.name = args.name + "_" + timestamp if args.name else timestamp
+    if args.name:
+        args.name = args.name if args.no_timestamp else args.name + "_" + timestamp
+    else:
+        args.name = timestamp
     return args
 
 
@@ -228,7 +232,7 @@ def main():
             logger.info("Failed to load state dict into optimizer")
 
     if FLAGS.lookahead:
-        optimizer = pt.optim.Lookahead(optimizer)
+        optimizer = pt.optim.Lookahead(optimizer, la_alpha=0.5)
 
     model, optimizer = amp.initialize(
         model,
