@@ -47,17 +47,54 @@ def parse_args():
         args_for_setting_config_path=["-c", "--config_file"],
         config_file_parser_class=argparse.YAMLConfigFileParser,
     )
+
+    ## MODEL
     add_arg = parser.add_argument
     add_arg(
         "--arch",
         "-a",
-        metavar="ARCH",
         default="resnet18",
         choices=model_names,
         help="model architecture: " + " | ".join(model_names) + " (default: resnet18)",
     )
     add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
     add_arg("--pretrained", dest="pretrained", action="store_true", help="use pre-trained model")
+    add_arg(
+        "--weight_standardization", action="store_true", help="Change convs to WS Convs. See paper for details"
+    )
+
+    
+    ## OPTIMIZER
+    add_arg("--optim", type=str, default="SGD", help="Optimizer to use (default: sgd)")
+    add_arg("--optim_params", type=eval, default={}, help="Additional optimizer params as kwargs")
+    add_arg("--lookahead", action="store_true", help="Flag to wrap optimizer with Lookahead wrapper")
+    add_arg(
+        "--weight_decay", "--wd", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)",
+    )
+    add_arg("--no_bn_wd", action="store_true", help="Remove batch norm from weight decay")
+
+
+    ## DATALOADER
+    add_arg("--sz", type=int, default=224)
+    add_arg("--bs", type=int, default=256)
+    add_arg("--min_area", type=float, default=0.08)
+    add_arg("--workers", "-j", default=4, type=int, help="number of data loading workers (default: 4)")
+    add_arg(
+        "--mixup", type=float, default=0, help="Alpha for mixup augmentation. If 0 then mixup is diabled",
+    )
+    add_arg(
+        "--cutmix", type=float, default=0, help="Alpha for cutmix augmentation. If 0 then cutmix is diabled",
+    )
+    add_arg("--cutmix_prob", type=float, default=0.5)
+    add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
+
+
+    ## CRITERION
+    add_arg("--smooth", action="store_true", help="Use label smoothing")
+    add_arg("--sigmoid", action='store_true', help='Use sigmoid instead of softmax')
+
+
+    ## TRAINING
     add_arg(
         "--phases",
         type=eval,
@@ -66,35 +103,10 @@ def parse_args():
         '[{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]',
     )
     add_arg(
-        "-j",
-        "--workers",
-        default=4,
-        type=int,
-        metavar="N",
-        help="number of data loading workers (default: 4)",
-    )
-    add_arg(
         "--start_epoch", default=0, type=int, metavar="N", help="manual epoch number (useful on restarts)",
     )
-    add_arg(
-        "--weight_decay", "--wd", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)",
-    )
-    add_arg("--no_bn_wd", action="store_true", help="Remove batch norm from weight decay")
-    add_arg(
-        "--mixup", type=float, default=0, help="Alpha for mixup augmentation. If 0 then mixup is diabled",
-    )
-    add_arg(
-        "--cutmix", type=float, default=0, help="Alpha for cutmix augmentation. If 0 then cutmix is diabled",
-    )
-    add_arg("--cutmix_prob", type=float, default=0.5)
-    add_arg("--smooth", action="store_true", help="Use label smoothing")
-    add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
-    add_arg(
-        "--resume", default="", type=str, metavar="PATH", help="path to latest checkpoint (default: none)",
-    )
-    add_arg(
-        "-e", "--evaluate", dest="evaluate", action="store_true", help="evaluate model on validation set",
-    )
+    add_arg("--resume", default="", type=str, help="path to latest checkpoint (default: none)")
+    add_arg("--evaluate", "-e", action="store_true", help="evaluate model on validation set")
     add_arg(
         "--opt_level",
         default="O0",
@@ -102,6 +114,10 @@ def parse_args():
         choices=["O0", "O1", "O2", "O3"],
         help='optimizatin level for apex. (default: "00")',
     )
+    add_arg("--short_epoch", action="store_true", help="make epochs short (for debugging)")
+
+
+    ## OTHER 
     add_arg(
         "--local_rank",
         "--gpu",
@@ -110,6 +126,10 @@ def parse_args():
         help="Used for multi-process training. Can either be manually set "
         + "or automatically set by using 'python -m multiproc'.",
     )
+    add_arg("--deterministic", action="store_true")
+
+
+    ## LOGGING
     add_arg("--logdir", default="logs", type=str, help="where logs go")
     add_arg(
         "-n",
@@ -119,26 +139,11 @@ def parse_args():
         dest="name",
         help="Name of this run. If empty it would be a timestamp",
     )
-    add_arg("--short_epoch", action="store_true", help="make epochs short (for debugging)")
-    add_arg(
-        "--optim",
-        type=str,
-        default="SGD",  # choices=['sgd', 'sgdw', 'adam', 'adamw', 'rmsprop', 'radam'],
-        help="Optimizer to use (default: sgd)",
-    )
-    add_arg("--optim_params", type=eval, default={}, help="Additional optimizer params as kwargs")
-    add_arg("--deterministic", action="store_true")
-    add_arg(
-        "--lookahead", action="store_true", help="Flag to wrap optimizer with Lookahead wrapper",
-    )
-    add_arg("--sz", type=int, default=224)
-    add_arg("--bs", type=int, default=256)
-    add_arg("--min_area", type=float, default=0.08)
-    add_arg("--sigmoid", action='store_true', help='Use sigmoid instead of softmax')
     add_arg("--no_timestamp", action="store_true", help="Disables adding timestamp to run name")
     
-    args, not_parsed = parser.parse_known_args()[0]
-    logger.info(f"Not parsed args: {not_parsed}")
+
+    args, not_parsed = parser.parse_known_args()
+    print(f"Not parsed args: {not_parsed}")
     
     # detect distributed
     args.world_size = pt.utils.misc.env_world_size()
@@ -196,6 +201,8 @@ def main():
     else:
         logger.info(f"=> creating model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
+    if FLAGS.weight_standardization:
+        model = pt.modules.weight_standartization.conv_to_ws_conv(model)
     model = model.cuda()
     optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
 
