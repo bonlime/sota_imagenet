@@ -1,11 +1,12 @@
 # config close to one resnet50_baseline. only with GN 
-
+# Acc@1 77.102 Acc@5 93.626                                                                                                          
+# Total time: 28h 19.3m
 name : resnet50_group_norm_baseline
 arch : resnet50
 weight_decay : 3e-5
 smooth: true
 phases : [
-    {"ep": 0, "sz": 224, "bs": 32},
+    {"ep": 0, "sz": 224, "bs": 64},
     {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
     {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
 ]

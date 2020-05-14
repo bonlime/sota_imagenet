@@ -1,5 +1,4 @@
 no_bn_wd : true
 opt_level : O1
 optim : fused_sgd
-deterministic : true
 phases : [{"ep": 0,'sz': 224,'bs': 256, 'lr': 0, 'mom': 0.9}]

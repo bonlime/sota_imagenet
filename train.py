@@ -62,6 +62,7 @@ def parse_args():
     add_arg(
         "--weight_standardization", action="store_true", help="Change convs to WS Convs. See paper for details"
     )
+    add_arg("--ema_decay", type=float, default=0, help="If not zero, enables EMA decay for model weights")
 
     
     ## OPTIMIZER
@@ -182,8 +183,6 @@ if FLAGS.is_master:
     logger.configure(**config)
 else:
     logger.configure(handlers=[])
-# logger.info(FLAGS)
-# log = FileLogger(OUTDIR, is_master=FLAGS.is_master)
 
 
 def main():
@@ -250,6 +249,8 @@ def main():
         min_loss_scale=1.0,
         verbosity=0,
     )
+    # Important to create EMA Callback after cuda() and AMP but before DDP wrapper
+    ema_clb = pt_clb.ModelEma(model, FLAGS.ema_decay) if FLAGS.ema_decay else NoClbk()
     if FLAGS.distributed:
         model = DDP(model, delay_allreduce=True)
 
@@ -271,6 +272,7 @@ def main():
                 pt_clb.ConsoleLogger(),
                 pt_clb.TensorBoard(OUTDIR, log_every=25),
                 pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn"),
+                ema_clb, # ModelEMA MUST go after checkpoint saver to work, otherwise it would save main model instead of EMA
             ]
         )
     runner = pt.fit_wrapper.Runner(
