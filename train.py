@@ -258,12 +258,15 @@ def main():
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
     dm = DaliDataManager(FLAGS.phases)  # + FLAGS.start_epoch here
 
+    model_saver = pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn") if FLAGS.is_master else NoClbk()
     # common callbacks
     callbacks = [
         pt_clb.PhasesScheduler([copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
         pt_clb.FileLogger(OUTDIR, logger=logger),
         pt_clb.Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
         pt_clb.Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
+        model_saver, # need to have CheckpointSaver before EMA so moving it here
+        ema_clb, # ModelEMA MUST go after checkpoint saver to work, otherwise it would save main model instead of EMA
     ]
     if FLAGS.is_master:  # callback for master process
         callbacks.extend(
@@ -271,8 +274,6 @@ def main():
                 pt_clb.Timer(),
                 pt_clb.ConsoleLogger(),
                 pt_clb.TensorBoard(OUTDIR, log_every=25),
-                pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn"),
-                ema_clb, # ModelEMA MUST go after checkpoint saver to work, otherwise it would save main model instead of EMA
             ]
         )
     runner = pt.fit_wrapper.Runner(
@@ -349,7 +350,8 @@ class DaliDataManager:
         trn_loader = DaliLoader(True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
         FLAGS.bs = val_bs
         val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
-        return trn_loader, val_loader
+        # return trn_loader, val_loader
+        return val_loader, val_loader
 
 
 
