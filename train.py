@@ -350,8 +350,7 @@ class DaliDataManager:
         trn_loader = DaliLoader(True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
         FLAGS.bs = val_bs
         val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
-        # return trn_loader, val_loader
-        return val_loader, val_loader
+        return trn_loader, val_loader
 
 
 
