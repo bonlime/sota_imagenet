@@ -10,7 +10,18 @@ DATA_DIR = "data/"
 
 
 class HybridPipe(Pipeline):
-    def __init__(self, train=False, bs=32, workers=4, sz=224, ctwist=True, dali_cpu=False, min_area=0.08):
+    def __init__(
+        self,
+        train=False,
+        bs=32,
+        workers=4,
+        sz=224,
+        ctwist=True,
+        dali_cpu=False,
+        min_area=0.08,
+        resize_method="linear",
+        crop_method="",
+        ):
 
         local_rank, world_size = env_rank(), env_world_size()
         super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
@@ -24,7 +35,7 @@ class HybridPipe(Pipeline):
             num_shards=world_size,
             # read_ahead=True,
         )
-
+        interp_type = types.INTERP_TRIANGULAR if resize_method == "linear" else types.INTERP_CUBIC
         if train:
             self.decode = ops.ImageDecoderRandomCrop(
                 output_type=types.RGB,
@@ -37,16 +48,19 @@ class HybridPipe(Pipeline):
             # works much better with INTERP_TRIANGULAR
             self.resize = ops.Resize(
                 device="cpu" if dali_cpu else "gpu",
-                interp_type=types.INTERP_TRIANGULAR,
+                interp_type=interp_type,
                 resize_x=sz,
                 resize_y=sz,
             )
         else:
             self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
-            # 14% bigger and dividable by 16 then center crop
-            crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16)
+            if crop_method == "full":
+                crop_size = sz
+            else:
+                # 14% bigger and dividable by 16 then center crop
+                crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16)
             self.resize = ops.Resize(
-                device="gpu", interp_type=types.INTERP_TRIANGULAR, resize_shorter=crop_size,
+                device="gpu", interp_type=interp_type, resize_shorter=crop_size,
             )
         # color augs
         self.contrast = ops.BrightnessContrast(device="gpu")
@@ -97,9 +111,29 @@ class HybridPipe(Pipeline):
 class DaliLoader:
     """Wrap dali to look like torch dataloader"""
 
-    def __init__(self, train=False, bs=32, workers=4, sz=224, ctwist=True, min_area=0.08):
+    def __init__(
+        self,
+        train=False,
+        bs=32,
+        workers=4,
+        sz=224,
+        ctwist=True,
+        min_area=0.08,
+        resize_method="linear",
+        crop_method="",
+
+    ):
         """Returns train or val iterator over Imagenet data"""
-        pipe = HybridPipe(train=train, bs=bs, workers=workers, sz=sz, ctwist=ctwist, min_area=min_area)
+        pipe = HybridPipe(
+            train=train,
+            bs=bs,
+            workers=workers,
+            sz=sz,
+            ctwist=ctwist,
+            min_area=min_area,
+            resize_method=resize_method,
+            crop_method=crop_method,
+        )
         pipe.build()
         self.loader = DALIClassificationIterator(
             pipe,

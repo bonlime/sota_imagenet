@@ -88,6 +88,16 @@ def parse_args():
     )
     add_arg("--cutmix_prob", type=float, default=0.5)
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
+    add_arg("--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type")
+    add_arg(
+        "--crop_method",
+        type=str,
+        default="",
+        choices=["", "full"],
+        help="By default use Imagenet 0.875 crop for validation. If `full` then resize shortest to `size` and take center crop. \
+            It gives much higher accuracy with the same weights and is more practical"
+    )
+
 
 
     ## CRITERION
@@ -230,7 +240,7 @@ def main():
                 new_key = ".".join(k.split(".")[1:])
                 new_sd[new_key] = v
             checkpoint["state_dict"] = new_sd
-        model.load_state_dict(checkpoint["state_dict"])
+        model.load_state_dict(checkpoint["state_dict"], strict=False)
         FLAGS.start_epoch = checkpoint["epoch"]
         try:
             optimizer.load_state_dict(checkpoint["optimizer"])
@@ -339,17 +349,19 @@ class DaliDataManager:
 
         # 50.000 should be dividable by val_bs * num_gpu
         # otherwise reduced accuracy differs from acc on 1 gpu
-        if sz == 128:
+        val_sz = kwargs.pop("val_sz", sz) # maybe use differend size for validation
+        if val_sz == 128:
             val_bs = 500
-        elif sz == 224:
+        elif val_sz == 224:
             val_bs = 250
         else:
             val_bs = 125
         FLAGS.sz = sz
         FLAGS.bs = bs
-        trn_loader = DaliLoader(True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
+        trn_loader = DaliLoader(True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area, FLAGS.resize_method)
+        FLAGS.sz = val_sz
         FLAGS.bs = val_bs
-        val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area)
+        val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area, FLAGS.resize_method, FLAGS.crop_method)
         return trn_loader, val_loader
 
 
