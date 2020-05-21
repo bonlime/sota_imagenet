@@ -1,0 +1,24 @@
+# BResNet stands for Bonlime ResNet - unpublished variant of ResNet with all possible improvements and hacks
+# Acc@1 79.705 Acc@5 94.939
+# Total time: 19h 0.8m (on 3xV100)
+# It gives a very good accuracy. Probably training longer would improve results
+name : bresnet50_short
+arch : resnet50
+model_params : 
+  stem_type: space2depth
+  antialias: true
+  attn_type: eca
+
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: True
+ctwist : True
+ema_decay: 0.9999 # using EMA instead of Lookahead
+weight_standardization: True
+# 0.5625 = 0.75 * 192 / 256
+phases : [
+    {"ep": 0, "sz": 224, "bs": 192},
+    {"ep": [0, 8], "lr": [0, 0.5625], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.5625, 0], "mom": 0.9, "mode": "cos"},
+]
+

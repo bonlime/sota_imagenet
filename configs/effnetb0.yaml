@@ -1,0 +1,19 @@
+# Acc@1 76.648 Acc@5 93.326
+# Total time: 41h 49.6m
+# lower than the paper by ~0.6% and much lower that advprop  
+name : effnetb0
+arch : efficientnet_b0
+model_params :
+  norm_act: swish # setting it explicitly
+  drop_rate: 0.2
+  drop_connect_rate: 0.2
+weight_decay : 1e-5
+cutmix : 1.0
+smooth: true
+ctwist : True
+lookahead : True
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.5], "mom": 0.9},
+    {"ep": [8, 350], "lr": [0.5, 0], "mom": 0.9, "mode": "cos"},
+]

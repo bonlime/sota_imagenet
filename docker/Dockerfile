@@ -12,6 +12,7 @@ RUN apt-get update --fix-missing && \
 
 RUN pip --no-cache-dir install --upgrade \
     ConfigArgParse \
+    ranger-fm \
     # git+https://github.com/bonlime/pytorch-tools.git@v0.1.4 \
     git+https://github.com/bonlime/pytorch-tools.git@dev \
     loguru

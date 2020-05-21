@@ -1,0 +1,28 @@
+# BResNet stands for Bonlime ResNet - unpublished variant of ResNet with all possible improvements and hacks
+# This is an attemt to train ultimate encoder with low memory consumption (InplaceABN) and high accuracy
+# Acc@1 80.182 Acc@5 94.992 in ~60h with some restarts. Need to run again later with drop_connect
+name : bresnet50_encoder
+arch : resnet50
+model_params : 
+  stem_type: space2depth
+  antialias: true
+  attn_type: eca
+  norm_layer: inplaceabn
+  norm_act: leaky_relu
+  drop_rate: 0.2
+  drop_connect_rate: 0.2
+
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: True
+ctwist : True
+ema_decay: 0.9999 # using EMA instead of Lookahead
+weight_standardization: True
+# base lr should be 0.5625 = 0.75 * 192 / 256
+# but want to train with lower LR because we train longer
+phases : [
+    {"ep": 0, "sz": 224, "bs": 192},
+    {"ep": [0, 8], "lr": [0, 0.1], "mom": 0.9},
+    {"ep": [8, 200], "lr": [0.1, 0], "mom": 0.9, "mode": "cos"},
+]
+

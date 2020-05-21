@@ -1,0 +1,15 @@
+# Acc@1 79.281 Acc@5 94.664
+# Total time: 20h 42.0m (on 3 GPUs)
+name : eca_resnet50_better
+arch : resnet50
+model_params : {"deep_stem": true,"antialias": true,"attn_type": "eca"}
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: true
+ctwist : True
+lookahead : True
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.75], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.75, 0], "mom": 0.9, "mode": "cos"},
+]
