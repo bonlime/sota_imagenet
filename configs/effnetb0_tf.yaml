@@ -1,0 +1,24 @@
+name : effnetb0
+arch : efficientnet_b0
+model_params :
+  norm_act: swish # setting it explicitly
+  drop_rate: 0.2
+  drop_connect_rate: 0.2
+weight_decay : 1e-5
+smooth: true
+# adding more augs
+ctwist : True
+cutmix: 1.0
+ema_decay: 0.9999
+optim: rmsprop
+# This config is for 3 GPUs
+# default lr for BS=256 is 0.016 and scaled linearly according to batch size and N GPUS
+# base lr = 384 * 3 / 256 * 0.016 = 0.072
+# in TF they train for 350 epochs with BS=2048. It's ~620 epochs with BS=384 * 3
+# but 620 is insane so I'll train for 450 epochs only 
+# final lr is calculated as 0.072 * (0.97**(1/2.4))**350 ~= 8.5e-4 ~= 1e-3
+phases : [
+    {"ep": 0, "sz": 224, "bs": 384, "val_sz": 256},
+    {"ep": [0, 8], "lr": [0, 0.072], "mom": 0.9},
+    {"ep": [8, 450], "lr": [0.072, 0.001], "mom": 0.9, "mode": "poly"},
+]

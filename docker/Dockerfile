@@ -13,9 +13,12 @@ RUN apt-get update --fix-missing && \
 RUN pip --no-cache-dir install --upgrade \
     ConfigArgParse \
     ranger-fm \
-    # git+https://github.com/bonlime/pytorch-tools.git@v0.1.4 \
-    git+https://github.com/bonlime/pytorch-tools.git@dev \
     loguru
+
+# adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
+ARG RANDOM_VAR=5
+RUN pip --no-cache-dir install --upgrade \
+    git+https://github.com/bonlime/pytorch-tools.git@dev
 
 COPY . /workdir
 WORKDIR /workdir

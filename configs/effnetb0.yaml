@@ -1,6 +1,9 @@
 # Acc@1 76.648 Acc@5 93.326
-# Total time: 41h 49.6m
+# Total time: 41h 49.6m x 4 V100
 # lower than the paper by ~0.6% and much lower that advprop  
+# with ema instead of lookahead and proper model init it's much closer to the paper
+# Acc@1 77.202 Acc@5 93.588
+# Total time: 46h 58.1m x 4 V100
 name : effnetb0
 arch : efficientnet_b0
 model_params :
@@ -11,7 +14,8 @@ weight_decay : 1e-5
 cutmix : 1.0
 smooth: true
 ctwist : True
-lookahead : True
+ema_decay: 0.9999 # using EMA instead of Lookahead
+lookahead: False
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
     {"ep": [0, 8], "lr": [0, 0.5], "mom": 0.9},

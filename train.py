@@ -254,7 +254,7 @@ def main():
         model,
         optimizer,
         opt_level=FLAGS.opt_level,
-        loss_scale=1 if FLAGS.opt_level == "O0" else 128.0,  # 2048,
+        # loss_scale=1 if FLAGS.opt_level == "O0" else 2048,  # 2048,
         max_loss_scale=2.0 ** 13,
         min_loss_scale=1.0,
         verbosity=0,
