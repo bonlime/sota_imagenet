@@ -18,8 +18,6 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.distributed as dist
 
-# for fp16
-from apex import amp
 from apex.parallel import DistributedDataParallel as DDP
 
 import pytorch_tools as pt
@@ -60,11 +58,12 @@ def parse_args():
     add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
     add_arg("--pretrained", dest="pretrained", action="store_true", help="use pre-trained model")
     add_arg(
-        "--weight_standardization", action="store_true", help="Change convs to WS Convs. See paper for details"
+        "--weight_standardization",
+        action="store_true",
+        help="Change convs to WS Convs. See paper for details",
     )
     add_arg("--ema_decay", type=float, default=0, help="If not zero, enables EMA decay for model weights")
 
-    
     ## OPTIMIZER
     add_arg("--optim", type=str, default="SGD", help="Optimizer to use (default: sgd)")
     add_arg("--optim_params", type=eval, default={}, help="Additional optimizer params as kwargs")
@@ -73,7 +72,6 @@ def parse_args():
         "--weight_decay", "--wd", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)",
     )
     add_arg("--no_bn_wd", action="store_true", help="Remove batch norm from weight decay")
-
 
     ## DATALOADER
     add_arg("--sz", type=int, default=224)
@@ -88,22 +86,21 @@ def parse_args():
     )
     add_arg("--cutmix_prob", type=float, default=0.5)
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
-    add_arg("--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type")
+    add_arg(
+        "--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type"
+    )
     add_arg(
         "--crop_method",
         type=str,
         default="",
         choices=["", "full"],
         help="By default use Imagenet 0.875 crop for validation. If `full` then resize shortest to `size` and take center crop. \
-            It gives much higher accuracy with the same weights and is more practical"
+            It gives much higher accuracy with the same weights and is more practical",
     )
-
-
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")
-    add_arg("--sigmoid", action='store_true', help='Use sigmoid instead of softmax')
-
+    add_arg("--sigmoid", action="store_true", help="Use sigmoid instead of softmax")
 
     ## TRAINING
     add_arg(
@@ -126,9 +123,7 @@ def parse_args():
         help='optimizatin level for apex. (default: "00")',
     )
     add_arg("--short_epoch", action="store_true", help="make epochs short (for debugging)")
-
-
-    ## OTHER 
+    ## OTHER
     add_arg(
         "--local_rank",
         "--gpu",
@@ -138,7 +133,6 @@ def parse_args():
         + "or automatically set by using 'python -m multiproc'.",
     )
     add_arg("--deterministic", action="store_true")
-
 
     ## LOGGING
     add_arg("--logdir", default="logs", type=str, help="where logs go")
@@ -151,11 +145,10 @@ def parse_args():
         help="Name of this run. If empty it would be a timestamp",
     )
     add_arg("--no_timestamp", action="store_true", help="Disables adding timestamp to run name")
-    
 
     args, not_parsed = parser.parse_known_args()
     print(f"Not parsed args: {not_parsed}")
-    
+
     # detect distributed
     args.world_size = pt.utils.misc.env_world_size()
     args.distributed = args.world_size > 1
@@ -250,15 +243,6 @@ def main():
     if FLAGS.lookahead:
         optimizer = pt.optim.Lookahead(optimizer, la_alpha=0.5)
 
-    model, optimizer = amp.initialize(
-        model,
-        optimizer,
-        opt_level=FLAGS.opt_level,
-        # loss_scale=1 if FLAGS.opt_level == "O0" else 2048,  # 2048,
-        max_loss_scale=2.0 ** 13,
-        min_loss_scale=1.0,
-        verbosity=0,
-    )
     # Important to create EMA Callback after cuda() and AMP but before DDP wrapper
     ema_clb = pt_clb.ModelEma(model, FLAGS.ema_decay) if FLAGS.ema_decay else NoClbk()
     if FLAGS.distributed:
@@ -275,16 +259,12 @@ def main():
         pt_clb.FileLogger(OUTDIR, logger=logger),
         pt_clb.Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
         pt_clb.Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
-        model_saver, # need to have CheckpointSaver before EMA so moving it here
-        ema_clb, # ModelEMA MUST go after checkpoint saver to work, otherwise it would save main model instead of EMA
+        model_saver,  # need to have CheckpointSaver before EMA so moving it here
+        ema_clb,  # ModelEMA MUST go after checkpoint saver to work, otherwise it would save main model instead of EMA
     ]
     if FLAGS.is_master:  # callback for master process
         callbacks.extend(
-            [
-                pt_clb.Timer(),
-                pt_clb.ConsoleLogger(),
-                pt_clb.TensorBoard(OUTDIR, log_every=25),
-            ]
+            [pt_clb.Timer(), pt_clb.ConsoleLogger(), pt_clb.TensorBoard(OUTDIR, log_every=25),]
         )
     runner = pt.fit_wrapper.Runner(
         model,
@@ -292,6 +272,7 @@ def main():
         criterion,
         metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
         callbacks=callbacks,
+        use_fp16=FLAGS.opt_level != "O0",
     )
     if FLAGS.evaluate:
         dm.set_stage(0)
@@ -349,7 +330,7 @@ class DaliDataManager:
 
         # 50.000 should be dividable by val_bs * num_gpu
         # otherwise reduced accuracy differs from acc on 1 gpu
-        val_sz = kwargs.pop("val_sz", sz) # maybe use differend size for validation
+        val_sz = kwargs.pop("val_sz", sz)  # maybe use differend size for validation
         if val_sz == 128:
             val_bs = 500
         elif val_sz == 224:
@@ -358,12 +339,22 @@ class DaliDataManager:
             val_bs = 125
         FLAGS.sz = sz
         FLAGS.bs = bs
-        trn_loader = DaliLoader(True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area, FLAGS.resize_method)
+        trn_loader = DaliLoader(
+            True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area, FLAGS.resize_method
+        )
         FLAGS.sz = val_sz
         FLAGS.bs = val_bs
-        val_loader = DaliLoader(False, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area, FLAGS.resize_method, FLAGS.crop_method)
+        val_loader = DaliLoader(
+            False,
+            FLAGS.bs,
+            FLAGS.workers,
+            FLAGS.sz,
+            FLAGS.ctwist,
+            FLAGS.min_area,
+            FLAGS.resize_method,
+            FLAGS.crop_method,
+        )
         return trn_loader, val_loader
-
 
 
 if __name__ == "__main__":
