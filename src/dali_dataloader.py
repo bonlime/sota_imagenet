@@ -17,11 +17,10 @@ class HybridPipe(Pipeline):
         workers=4,
         sz=224,
         ctwist=True,
-        dali_cpu=False,
         min_area=0.08,
         resize_method="linear",
         crop_method="",
-        ):
+    ):
 
         local_rank, world_size = env_rank(), env_world_size()
         super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
@@ -39,19 +38,14 @@ class HybridPipe(Pipeline):
         if train:
             self.decode = ops.ImageDecoderRandomCrop(
                 output_type=types.RGB,
-                device="cpu" if dali_cpu else "mixed",
+                device="mixed",
                 random_aspect_ratio=[0.75, 1.25],
                 random_area=[min_area, 1.0],
                 num_attempts=100,
             )
             # resize doesn't preserve aspect ratio on purpose
             # works much better with INTERP_TRIANGULAR
-            self.resize = ops.Resize(
-                device="cpu" if dali_cpu else "gpu",
-                interp_type=interp_type,
-                resize_x=sz,
-                resize_y=sz,
-            )
+            self.resize = ops.Resize(device="gpu", interp_type=interp_type, resize_x=sz, resize_y=sz,)
         else:
             self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
             if crop_method == "full":
@@ -59,9 +53,7 @@ class HybridPipe(Pipeline):
             else:
                 # 14% bigger and dividable by 16 then center crop
                 crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16)
-            self.resize = ops.Resize(
-                device="gpu", interp_type=interp_type, resize_shorter=crop_size,
-            )
+            self.resize = ops.Resize(device="gpu", interp_type=interp_type, resize_shorter=crop_size,)
         # color augs
         self.contrast = ops.BrightnessContrast(device="gpu")
         self.hsv = ops.Hsv(device="gpu")
@@ -77,12 +69,13 @@ class HybridPipe(Pipeline):
             output_layout=types.NCHW,
         )
         self.coin = ops.CoinFlip()
+        # jitter is a very strong aug want to have it rarely
+        self.coin_jitter = ops.CoinFlip(probability=0.1)
 
         self.rng1 = ops.Uniform(range=[0, 1])
         self.rng2 = ops.Uniform(range=[0.85, 1.15])
         self.rng3 = ops.Uniform(range=[-15, 15])
         self.train = train
-        self.dali_cpu = dali_cpu
         self.ctwist = ctwist
 
     def define_graph(self):
@@ -91,14 +84,15 @@ class HybridPipe(Pipeline):
 
         # Decode and augmentation
         images = self.decode(images)
+        if self.train and self.ctwist:
+            # want to jitter before resize so that following op smoothes the jitter
+            images = self.jitter(images, mask=self.coin_jitter())
         images = self.resize(images)
-        if self.dali_cpu:
-            images = images.gpu()
+
         if self.train:
             if self.ctwist:
                 images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
                 images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
-            # images = self.jitter(images, mask=self.coin())
             images = self.normalize(
                 images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1()
             )
@@ -121,7 +115,6 @@ class DaliLoader:
         min_area=0.08,
         resize_method="linear",
         crop_method="",
-
     ):
         """Returns train or val iterator over Imagenet data"""
         pipe = HybridPipe(
