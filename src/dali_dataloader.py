@@ -84,9 +84,10 @@ class HybridPipe(Pipeline):
 
         # Decode and augmentation
         images = self.decode(images)
-        if self.train and self.ctwist:
-            # want to jitter before resize so that following op smoothes the jitter
-            images = self.jitter(images, mask=self.coin_jitter())
+        # remove jitter for now. turn on for longer schedules for stronger regularization
+        # if self.train and self.ctwist:
+        #    # want to jitter before resize so that following op smoothes the jitter
+        #    images = self.jitter(images, mask=self.coin_jitter())
         images = self.resize(images)
 
         if self.train:
