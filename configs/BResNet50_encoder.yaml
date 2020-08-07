@@ -3,10 +3,46 @@
 # Acc@1 80.182 Acc@5 94.992 in ~60h with some restarts. Need to run again later with drop_connect
 # Acc@1 81.420 Acc@5 95.654 with full crop and larger image for validation
 
-name : bresnet50_encoder_finetune
+# name : bresnet50_encoder_finetune
+# arch : resnet50
+# model_params : 
+#   stem_type: space2depth
+#   antialias: true
+#   attn_type: eca
+#   norm_layer: inplaceabn
+#   norm_act: leaky_relu
+#   drop_rate: 0.2
+#   drop_connect_rate: 0.2
+
+#weight_decay : 3e-5
+#cutmix : 1.0
+#smooth: True
+#ctwist : True
+#crop_method: full
+#resize_method: cubic
+#ema_decay: 0.9999 # using EMA instead of Lookahead
+#weight_standardization: True
+# base lr should be 0.5625 = 0.75 * 192 / 256
+# but want to train with lower LR because we train longer
+#phases : [
+#  {"ep": 0, "sz": 224, "val_sz": 288, "bs": 256},
+#  {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9}
+#  {"ep": [8, 200], "lr": [0.2, 0], "mode": "cos"}
+#  {"ep": [0, 10], "lr": [0.003, 0], "mode": "cos", "mom": 0.9},
+#  {"ep": [2, 100], "lr": [0.02, 0], "mode": "cos"},
+#]
+
+# this version is close to the one above with following changes:
+# * some code fixes (not config related)
+# * increased drop_rate and drop_connect rate: 0.2 -> 0.3
+# * stem_type: space2depth -> deep - to allow usage as encoder in segmentation
+# * lr scheduled changed: cosine -> cosine with restarts
+# * loss: cce -> sigmoid. this didn't really work out
+name : bresnet50_encoder2
+
 arch : resnet50
 model_params : 
-  stem_type: space2depth
+  stem_type: deep
   antialias: true
   attn_type: eca
   norm_layer: inplaceabn
@@ -26,8 +62,15 @@ weight_standardization: True
 # but want to train with lower LR because we train longer
 phases : [
   {"ep": 0, "sz": 224, "val_sz": 288, "bs": 256},
-  {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9}
-  {"ep": [8, 200], "lr": [0.2, 0], "mode": "cos"}
+  {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+  {"ep": [8, 100], "lr": [0.2, 0], "mode": "cos"},
+  {"ep": [100, 150], "lr": [0.02, 0], "mode": "cos"},
+  {"ep": [150, 200], "lr": [0.02, 0], "mode": "cos"},
 #  {"ep": [0, 10], "lr": [0.003, 0], "mode": "cos", "mom": 0.9},
 #  {"ep": [2, 100], "lr": [0.02, 0], "mode": "cos"},
 ]
+
+
+
+
+

@@ -1,0 +1,14 @@
+# first run with low augs lead to very hard overfit. increasing augs to avoid this. no architecture changes
+
+name : darknet53_baseline
+arch : darknet53
+model_params:
+  drop_connect_rate: 0.3
+weight_decay : 1e-4
+ctwist: true
+smooth: true
+phases : [
+    {"ep": 0, "sz": 224, "bs": 128},
+    {"ep": [0, 8], "lr": [0, 0.5], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.5, 0], "mom": 0.9, "mode": "cos"},
+]

@@ -17,8 +17,18 @@ optim: rmsprop
 # in TF they train for 350 epochs with BS=2048. It's ~620 epochs with BS=384 * 3
 # but 620 is insane so I'll train for 450 epochs only 
 # final lr is calculated as 0.072 * (0.97**(1/2.4))**350 ~= 8.5e-4 ~= 1e-3
+#phases : [
+#    {"ep": 0, "sz": 224, "bs": 384, "val_sz": 256},
+#    {"ep": [0, 8], "lr": [0, 0.072], "mom": 0.9},
+#    {"ep": [8, 450], "lr": [0.072, 0.001], "mom": 0.9, "mode": "poly"},
+#]
+
+# This config is for 4 GPUs
+# base lr = 0.096
+# final lr = 0.096* (0.97**(1/2.4))**350 ~= 0.001
 phases : [
     {"ep": 0, "sz": 224, "bs": 384, "val_sz": 256},
-    {"ep": [0, 8], "lr": [0, 0.072], "mom": 0.9},
-    {"ep": [8, 450], "lr": [0.072, 0.001], "mom": 0.9, "mode": "poly"},
+    {"ep": [0, 8], "lr": [0, 0.096], "mom": 0.9},
+    {"ep": [8, 450], "lr": [0.096, 0.001], "mom": 0.9, "mode": "poly"},
 ]
+

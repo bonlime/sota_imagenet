@@ -1,0 +1,12 @@
+# experimentin with input stem. using smaller size for faster experiments
+name : exp_R50_default
+arch : resnet50
+model_params:
+  stem_type: ""
+weight_decay : 3e-5
+smooth: true
+phases : [
+    {"ep": 0, "sz": 128, "bs": 384},
+    {"ep": [0, 8], "lr": [0, 1.0], "mom": 0.9},
+    {"ep": [8, 90], "lr": [1.0, 0], "mom": 0.9, "mode": "cos"},
+]
