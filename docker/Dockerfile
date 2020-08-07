@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:20.03-py3
+FROM nvcr.io/nvidia/pytorch:20.06-py3
 
 # base setup
 RUN apt-get update --fix-missing && \
@@ -15,10 +15,14 @@ RUN pip --no-cache-dir install --upgrade \
     ranger-fm \
     loguru
 
-# adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
-ARG RANDOM_VAR=5
+# install timm models library
 RUN pip --no-cache-dir install --upgrade \
-    git+https://github.com/bonlime/pytorch-tools.git@dev
+    git+https://github.com/rwightman/pytorch-image-models@master
+
+# adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
+ARG RANDOM_VAR=0
+RUN pip --no-cache-dir install --upgrade \
+    git+https://github.com/bonlime/pytorch-tools.git@add_darknet
 
 COPY . /workdir
 WORKDIR /workdir
