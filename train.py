@@ -12,6 +12,8 @@ from loguru import logger
 from datetime import datetime
 import configargparse as argparse
 
+import timm
+
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
@@ -19,6 +21,7 @@ import torch.optim
 import torch.distributed as dist
 
 from apex.parallel import DistributedDataParallel as DDP
+from torch.nn.parallel import DistributedDataParallel as DDP_torch
 
 import pytorch_tools as pt
 import pytorch_tools.models as models
@@ -56,7 +59,6 @@ def parse_args():
         help="model architecture: " + " | ".join(model_names) + " (default: resnet18)",
     )
     add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
-    add_arg("--pretrained", dest="pretrained", action="store_true", help="use pre-trained model")
     add_arg(
         "--weight_standardization",
         action="store_true",
@@ -190,6 +192,8 @@ else:
 
 def main():
     logger.info(FLAGS)
+    logger.info(f"Pytorch-tools version: {pt.__version__}")
+    logger.info(f"Torch version: {torch.__version__}")
 
     if FLAGS.distributed:
         logger.info("Distributed initializing process group")
@@ -197,11 +201,10 @@ def main():
         dist.init_process_group(backend="nccl", init_method="env://", world_size=FLAGS.world_size)
 
     logger.info("Loading model")
-    if FLAGS.pretrained:
-        logger.info(f"=> using pre-trained model '{FLAGS.arch}'")
-        model = models.__dict__[FLAGS.arch](pretrained="imagenet", **FLAGS.model_params)
+    if FLAGS.arch.startswith("timm_"):
+        # allow using timms models through config
+        model = models.__dict__[FLAGS.arch[5:]](**FLAGS.model_params)
     else:
-        logger.info(f"=> creating model '{FLAGS.arch}'")
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     if FLAGS.weight_standardization:
         model = pt.modules.weight_standartization.conv_to_ws_conv(model)
@@ -225,16 +228,9 @@ def main():
         checkpoint = torch.load(
             FLAGS.resume, map_location=lambda storage, loc: storage.cuda(FLAGS.local_rank),
         )
-        has_module_in_sd = list(checkpoint["state_dict"].keys())[0].split(".")[0] == "module"
-        if has_module_in_sd and not FLAGS.distributed:
-            # remove `modules` from names
-            new_sd = {}
-            for k, v in checkpoint["state_dict"].items():
-                new_key = ".".join(k.split(".")[1:])
-                new_sd[new_key] = v
-            checkpoint["state_dict"] = new_sd
         model.load_state_dict(checkpoint["state_dict"], strict=False)
         FLAGS.start_epoch = checkpoint["epoch"]
+        print("Checkpoint best epoch: ", checkpoint["epoch"])
         try:
             optimizer.load_state_dict(checkpoint["optimizer"])
         except:  # may raise an error if another optimzer was used
@@ -246,7 +242,7 @@ def main():
     # Important to create EMA Callback after cuda() and AMP but before DDP wrapper
     ema_clb = pt_clb.ModelEma(model, FLAGS.ema_decay) if FLAGS.ema_decay else NoClbk()
     if FLAGS.distributed:
-        model = DDP(model, delay_allreduce=True)
+        model = DDP_torch(model, device_ids=[FLAGS.local_rank])
 
     # data phases are parsed from start and shedule phases are parsed from the end
     # it allows mixtures like this: [{ep:0, bs:16, sz:128}, {ep:0, lr:1, mom:0.9}]
@@ -255,8 +251,9 @@ def main():
     model_saver = pt_clb.CheckpointSaver(OUTDIR, save_name="model.chpn") if FLAGS.is_master else NoClbk()
     # common callbacks
     callbacks = [
+        pt_clb.BatchMetrics([pt.metrics.Accuracy(), pt.metrics.Accuracy(5)]),
         pt_clb.PhasesScheduler([copy.deepcopy(p) for p in FLAGS.phases if "lr" in p]),
-        pt_clb.FileLogger(OUTDIR, logger=logger),
+        pt_clb.FileLogger(),
         pt_clb.Mixup(FLAGS.mixup, 1000) if FLAGS.mixup else NoClbk(),
         pt_clb.Cutmix(FLAGS.cutmix, 1000) if FLAGS.cutmix else NoClbk(),
         model_saver,  # need to have CheckpointSaver before EMA so moving it here
@@ -267,12 +264,7 @@ def main():
             [pt_clb.Timer(), pt_clb.ConsoleLogger(), pt_clb.TensorBoard(OUTDIR, log_every=25),]
         )
     runner = pt.fit_wrapper.Runner(
-        model,
-        optimizer,
-        criterion,
-        metrics=[pt.metrics.Accuracy(), pt.metrics.Accuracy(5)],
-        callbacks=callbacks,
-        use_fp16=FLAGS.opt_level != "O0",
+        model, optimizer, criterion, callbacks=callbacks, use_fp16=FLAGS.opt_level != "O0",
     )
     if FLAGS.evaluate:
         dm.set_stage(0)
@@ -288,7 +280,7 @@ def main():
             epochs=dm.stage_len + dm.stages[idx]["ep"],
             start_epoch=dm.stages[idx]["ep"],
         )
-    return runner.state.val_loss.avg, [m.avg for m in runner.state.val_metrics]
+    return runner.state.val_loss.avg, runner.state.val_metrics
 
 
 class DaliDataManager:
@@ -359,13 +351,9 @@ class DaliDataManager:
 
 if __name__ == "__main__":
     start_time = time.time()  # Loading start to after everything is loaded
-    _, res = main()
-    acc1, acc5 = res[0], res[1]
-    # need to calculate mean of val metrics between processes, because each validated on different images
-    if FLAGS.distributed:
-        metrics = torch.tensor([acc1, acc5]).float().cuda()
-        acc1, acc5 = pt.utils.misc.reduce_tensor(metrics).cpu().numpy()
+    _, metrics = main()
+    # metrics here are already reduced by runner. no need to anything additionally
     if FLAGS.is_master:
-        logger.info(f"Acc@1 {acc1:.3f} Acc@5 {acc5:.3f}")
+        logger.info(f"Acc@1 {metrics['Acc@1'].avg:.3f} Acc@5 {metrics['Acc@5'].avg:.3f}")
         m = (time.time() - start_time) / 60
         logger.info(f"Total time: {int(m / 60)}h {m % 60:.1f}m")
