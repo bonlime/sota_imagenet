@@ -1,0 +1,32 @@
+# R34 with removed residual in stride 2 blocks and additional conv in the head to remove
+# representational bottleneck
+name : exp4.simpl_R34
+arch : simpl_resnet34
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+# Epoch 89/90. training: 2504it [09:15,  4.51it/s, Acc@1=78.238, Acc@5=92.371, Loss=1.9043]
+# Epoch 89/90. validating: 101it [00:17,  5.92it/s, Acc@1=78.980, Acc@5=94.412, Loss=1.8028]
+# [08-10 06:53:07] - Train loss: 1.9031 | Acc@1: 78.2649 | Acc@5: 92.3855
+# [08-10 06:53:07] - Val   loss: 1.9636 | Acc@1: 75.1500 | Acc@5: 92.3660
+# [08-10 06:53:07] - Epoch 89: best loss improved from 1.9638 to 1.9636
+# [08-10 06:53:08] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [09:13,  4.52it/s, Acc@1=78.295, Acc@5=92.367, Loss=1.9017]
+# Epoch 90/90. validating: 101it [00:16,  6.13it/s, Acc@1=71.360, Acc@5=90.352, Loss=2.1242]
+# [08-10 07:02:38] - Train loss: 1.9025 | Acc@1: 78.2674 | Acc@5: 92.3671
+# [08-10 07:02:38] - Val   loss: 1.9634 | Acc@1: 75.1700 | Acc@5: 92.3840
+# [08-10 07:02:38] - Epoch 90: best loss improved from 1.9636 to 1.9634
+# [08-10 07:02:39] - Acc@1 75.170 Acc@5 92.384
+# [08-10 07:02:39] - Total time: 20h 45.5m
+
