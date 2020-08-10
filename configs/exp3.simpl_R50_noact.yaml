@@ -1,0 +1,37 @@
+# same as R50 but no residual for first block in each stage
+# same as exp2 but removed last activation in bottleneck to keep stem clean
+name : exp3.simpl_no_act_R50
+arch : simpl_resnet50
+weight_decay : 3e-5
+smooth: true
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+# Epoch 88/90. training: 2504it [12:48,  3.26it/s, Acc@1=82.916, Acc@5=94.259, Loss=1.7411]
+# Epoch 88/90. validating: 101it [00:22,  4.51it/s, Acc@1=72.188, Acc@5=90.660, Loss=2.0965]
+# [08-08 11:46:55] - Train loss: 1.7413 | Acc@1: 82.9033 | Acc@5: 94.2732
+# [08-08 11:46:55] - Val   loss: 1.9349 | Acc@1: 76.1060 | Acc@5: 92.7240
+# [08-08 11:46:55] - Epoch 88: best loss improved from 1.9354 to 1.9349
+# [08-08 11:46:55] - Epoch 89 | lr 4.58e-04
+# Epoch 89/90. training: 2504it [12:41,  3.29it/s, Acc@1=82.983, Acc@5=94.327, Loss=1.7367]
+# Epoch 89/90. validating: 101it [00:20,  4.94it/s, Acc@1=80.040, Acc@5=94.840, Loss=1.7730]
+# [08-08 11:59:57] - Train loss: 1.7363 | Acc@1: 82.9884 | Acc@5: 94.3411
+# [08-08 11:59:57] - Val   loss: 1.9347 | Acc@1: 76.1180 | Acc@5: 92.7700
+# [08-08 11:59:57] - Epoch 89: best loss improved from 1.9349 to 1.9347
+# [08-08 11:59:57] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [12:37,  3.31it/s, Acc@1=82.982, Acc@5=94.355, Loss=1.7356]
+# Epoch 90/90. validating: 101it [00:19,  5.08it/s, Acc@1=72.208, Acc@5=90.696, Loss=2.0968]
+# [08-08 12:12:55] - Train loss: 1.7360 | Acc@1: 82.9871 | Acc@5: 94.3562
+# [08-08 12:12:55] - Val   loss: 1.9349 | Acc@1: 76.1200 | Acc@5: 92.7400
+# [08-08 12:12:55] - Acc@1 76.120 Acc@5 92.740
+# [08-08 12:12:55] - Total time: 19h 17.3m
+
+# after first trial added this to have more confident estamation of final loss and to prevent overfit
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
