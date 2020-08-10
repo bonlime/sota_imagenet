@@ -55,7 +55,7 @@ def parse_args():
         "--arch",
         "-a",
         default="resnet18",
-        choices=model_names,
+        # choices=model_names,
         help="model architecture: " + " | ".join(model_names) + " (default: resnet18)",
     )
     add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
@@ -203,11 +203,12 @@ def main():
     logger.info("Loading model")
     if FLAGS.arch.startswith("timm_"):
         # allow using timms models through config
-        model = models.__dict__[FLAGS.arch[5:]](**FLAGS.model_params)
+        model = timm.models.__dict__[FLAGS.arch[5:]](**FLAGS.model_params)
     else:
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     if FLAGS.weight_standardization:
         model = pt.modules.weight_standartization.conv_to_ws_conv(model)
+    logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
     model = model.cuda()
     optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
 
