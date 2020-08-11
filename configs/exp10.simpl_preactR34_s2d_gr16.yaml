@@ -2,10 +2,12 @@
 # representational bottleneck
 # and also with preactivation (aka ResNet v2 trick)
 # and also with Space2Depth input stem
-name : exp9.simpl_preactR34_s2d
+# and also with groups=16 in blocks
+name : exp10.simpl_preactR34_s2d_gr16
 arch : simpl_preactresnet34
 model_params:
     stem_type: s2d
+    groups: 16
 weight_decay : 3e-5
 smooth: true
 
