@@ -2,7 +2,7 @@
 # representational bottleneck
 # and also with preactivation (aka ResNet v2 trick)
 # and also with Space2Depth input stem
-name : exp9.simpl_preactR34_s2d
+name : exp9.simpl_preactR34_s2d_bias_in_last_conv
 arch : simpl_preactresnet34
 model_params:
     stem_type: s2d
@@ -19,3 +19,25 @@ phases : [
     {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
     {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
 ]
+
+# Epoch 88/90. training: 2504it [11:50,  3.53it/s, Acc@1=78.655, Acc@5=92.528, Loss=1.8879]                                                                                                                    
+# Epoch 88/90. validating: 101it [00:20,  4.94it/s, Acc@1=71.592, Acc@5=90.524, Loss=2.1038]                                                                                                                   
+# [08-12 07:38:09] - Train loss: 1.8881 | Acc@1: 78.6161 | Acc@5: 92.5393                                                                                                                                
+# [08-12 07:38:09] - Val   loss: 1.9447 | Acc@1: 75.5060 | Acc@5: 92.6360                                                                                                                                      
+# [08-12 07:38:09] - Epoch 88: best loss improved from 1.9450 to 1.9447                                                                                                                                        
+# [08-12 07:38:10] - Epoch 89 | lr 4.58e-04                                                                                                                                                                    
+# Epoch 89/90. training: 2504it [11:58,  3.49it/s, Acc@1=78.760, Acc@5=92.623, Loss=1.8820]                                                                                                                    
+# Epoch 89/90. validating: 101it [00:23,  4.38it/s, Acc@1=79.444, Acc@5=94.716, Loss=1.7855]                                                                                                                   
+# [08-12 07:50:31] - Train loss: 1.8816 | Acc@1: 78.7766 | Acc@5: 92.6388                                                                                                                                      
+# [08-12 07:50:31] - Val   loss: 1.9446 | Acc@1: 75.5220 | Acc@5: 92.6180                                                                                                                                      
+# [08-12 07:50:31] - Epoch 89: best loss improved from 1.9447 to 1.9446                                                                                                                                        
+# [08-12 07:50:31] - Epoch 90 | lr 1.65e-04                                                                                                                                                                    
+# Epoch 90/90. training: 2504it [11:57,  3.49it/s, Acc@1=78.766, Acc@5=92.631, Loss=1.8809]                                                                                                                    
+# Epoch 90/90. validating: 101it [00:24,  4.08it/s, Acc@1=71.568, Acc@5=90.512, Loss=2.1037]                                                                                                                   
+# [08-12 08:02:55] - Train loss: 1.8813 | Acc@1: 78.7659 | Acc@5: 92.6370                                                                                                                                      
+# [08-12 08:02:55] - Val   loss: 1.9446 | Acc@1: 75.5140 | Acc@5: 92.6240                                                                                                                                      
+# [08-12 08:02:55] - Epoch 90: best loss improved from 1.9446 to 1.9446                                                                                                                                        
+# [08-12 08:02:56] - Acc@1 75.514 Acc@5 92.624                                                                                                                                                                 
+# [08-12 08:02:56] - Total time: 18h 14.7m
+
+# gives improvement over PreAct Res34-50 but still worse than Linear Bottleneck Res34-50
