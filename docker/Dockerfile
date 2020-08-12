@@ -15,9 +15,10 @@ RUN pip --no-cache-dir install --upgrade \
     ranger-fm \
     loguru
 
-# install timm models library
+# install timm models library & inplace abn. to avoid building them each time later
 RUN pip --no-cache-dir install --upgrade \
-    git+https://github.com/rwightman/pytorch-image-models@master
+    git+https://github.com/rwightman/pytorch-image-models@master \
+    inplace-abn==1.0.12 
 
 # adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
 ARG RANDOM_VAR=0
