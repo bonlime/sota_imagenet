@@ -21,3 +21,5 @@ phases : [
     {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
     {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
 ]
+
+# IN PROGRESS
