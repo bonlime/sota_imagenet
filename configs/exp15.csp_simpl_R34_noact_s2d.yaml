@@ -14,3 +14,18 @@ phases : [
     {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
     {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
 ]
+
+# Epoch 89/90. training: 2504it [09:00,  4.63it/s, Acc@1=74.806, Acc@5=90.577, Loss=2.0601]
+# Epoch 89/90. validating: 101it [00:16,  6.20it/s, Acc@1=77.932, Acc@5=93.864, Loss=1.8673]
+# [08-13 06:03:00] - Train loss: 2.0590 | Acc@1: 74.8482 | Acc@5: 90.6015
+# [08-13 06:03:00] - Val   loss: 2.0295 | Acc@1: 74.1180 | Acc@5: 91.6040
+# [08-13 06:03:00] - Epoch 89: best loss improved from 2.0296 to 2.0295
+# [08-13 06:03:00] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [09:00,  4.64it/s, Acc@1=74.904, Acc@5=90.595, Loss=2.0579]
+# Epoch 90/90. validating: 101it [00:15,  6.38it/s, Acc@1=70.284, Acc@5=89.372, Loss=2.1914]
+# [08-13 06:12:17] - Train loss: 2.0578 | Acc@1: 74.9071 | Acc@5: 90.6071
+# [08-13 06:12:17] - Val   loss: 2.0294 | Acc@1: 74.1280 | Acc@5: 91.6140
+# [08-13 06:12:17] - Epoch 90: best loss improved from 2.0295 to 2.0294
+# [08-13 06:12:18] - Acc@1 74.128 Acc@5 91.614
+# [08-13 06:12:18] - Total time: 13h 56.2m
+

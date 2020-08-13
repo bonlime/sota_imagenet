@@ -21,7 +21,7 @@ RUN pip --no-cache-dir install --upgrade \
     inplace-abn==1.0.12 
 
 # adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
-ARG RANDOM_VAR=0
+ARG RANDOM_VAR=1
 RUN pip --no-cache-dir install --upgrade \
     git+https://github.com/bonlime/pytorch-tools.git@add_darknet
 
