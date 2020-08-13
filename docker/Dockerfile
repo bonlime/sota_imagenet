@@ -20,8 +20,9 @@ RUN pip --no-cache-dir install --upgrade \
     git+https://github.com/rwightman/pytorch-image-models@master \
     inplace-abn==1.0.12 
 
-# adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
-ARG RANDOM_VAR=1
+# adding this VAR to force update of pytorch-tools each time
+ARG RANDOM_VAR=none
+RUN RANDOM_VAR=${RANDOM_VAR}
 RUN pip --no-cache-dir install --upgrade \
     git+https://github.com/bonlime/pytorch-tools.git@add_darknet
 
