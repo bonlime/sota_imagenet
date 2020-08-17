@@ -1,0 +1,21 @@
+name : exp17.csp_simpl_R34_noact_s2d_075
+arch : csp_simpl_resnet34
+# increase number of features in csp
+# and remove csp from first block
+model_params:
+  stem_type: s2d
+  csp_block_ratio: 0.75
+  x2_transition: False
+  no_first_csp: True
+
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+ema_decay: 0.9993
+
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
