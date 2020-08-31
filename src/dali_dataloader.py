@@ -116,6 +116,7 @@ class DaliLoader:
         min_area=0.08,
         resize_method="linear",
         crop_method="",
+        classes_divisor=1,  # reduce number of classes by // cls_div
     ):
         """Returns train or val iterator over Imagenet data"""
         pipe = HybridPipe(
@@ -136,9 +137,12 @@ class DaliLoader:
             fill_last_batch=train,  # want real accuracy on validiation
             last_batch_padded=True,  # want epochs to have the same length
         )
+        self.cls_div = classes_divisor
 
     def __len__(self):
         return math.ceil(self.loader._size / self.loader.batch_size)
 
     def __iter__(self):
-        return ((batch[0]["data"], batch[0]["label"].squeeze().long()) for batch in self.loader)
+        # fmt: off
+        return ((batch[0]["data"], batch[0]["label"].squeeze().long() // self.cls_div) for batch in self.loader)
+        # fmt: on
