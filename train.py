@@ -99,6 +99,8 @@ def parse_args():
         help="By default use Imagenet 0.875 crop for validation. If `full` then resize shortest to `size` and take center crop. \
             It gives much higher accuracy with the same weights and is more practical",
     )
+    add_arg("--classes_divisor", type=int, default=1,
+            help="Used for reduction of number of classes")
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")
@@ -333,7 +335,14 @@ class DaliDataManager:
         FLAGS.sz = sz
         FLAGS.bs = bs
         trn_loader = DaliLoader(
-            True, FLAGS.bs, FLAGS.workers, FLAGS.sz, FLAGS.ctwist, FLAGS.min_area, FLAGS.resize_method
+            True, 
+            FLAGS.bs,
+            FLAGS.workers,
+            FLAGS.sz,
+            FLAGS.ctwist,
+            FLAGS.min_area,
+            FLAGS.resize_method,
+            classes_divisor=FLAGS.classes_divisor
         )
         FLAGS.sz = val_sz
         FLAGS.bs = val_bs
@@ -346,6 +355,7 @@ class DaliDataManager:
             FLAGS.min_area,
             FLAGS.resize_method,
             FLAGS.crop_method,
+            FLAGS.classes_divisor
         )
         return trn_loader, val_loader
 
