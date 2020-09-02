@@ -24,3 +24,16 @@ phases : [
 
 classes_divisor: 10 # train on 100 classes instead
 
+# Epoch 89/90. training: 2504it [10:56,  3.81it/s, Acc@1=77.936, Acc@5=92.606, Loss=1.7941]
+# Epoch 89/90. validating: 101it [00:19,  5.21it/s, Acc@1=83.888, Acc@5=96.256, Loss=1.5667]
+# [09-01 12:23:20] - Train loss: 1.7934 | Acc@1: 77.9517 | Acc@5: 92.6183
+# [09-01 12:23:20] - Val   loss: 1.8106 | Acc@1: 77.2940 | Acc@5: 93.2340
+# [09-01 12:23:20] - Epoch 89: best loss improved from 1.8107 to 1.8106
+# [09-01 12:23:20] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [11:01,  3.78it/s, Acc@1=77.924, Acc@5=92.670, Loss=1.7922]
+# Epoch 90/90. validating: 101it [00:19,  5.17it/s, Acc@1=70.700, Acc@5=90.192, Loss=2.0543]
+# [09-01 12:34:42] - Train loss: 1.7924 | Acc@1: 77.9595 | Acc@5: 92.6587
+# [09-01 12:34:42] - Val   loss: 1.8105 | Acc@1: 77.2980 | Acc@5: 93.2300
+# [09-01 12:34:42] - Epoch 90: best loss improved from 1.8106 to 1.8105
+# [09-01 12:34:43] - Acc@1 77.298 Acc@5 93.230
+# [09-01 12:34:43] - Total time: 17h 7.1m
