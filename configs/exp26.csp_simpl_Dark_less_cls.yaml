@@ -1,3 +1,4 @@
+# !!! Didn't train due to low performance of exp25
 # Like R34 but with BasicBlock instead of Bottleneck
 # also with removed residual in stride 2 blocks and additional conv in the head to remove representational bottleneck
 # and no last activation in each block

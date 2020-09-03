@@ -206,6 +206,10 @@ def main():
     if FLAGS.arch.startswith("timm_"):
         # allow using timms models through config
         model = timm.models.__dict__[FLAGS.arch[5:]](**FLAGS.model_params)
+    elif FLAGS.arch == "GENet_normal":
+        sys.path.append("/mnt/GPU-Efficient-Networks/")
+        import GENet
+        model = GENet.genet_normal(pretrained=False)
     else:
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     if FLAGS.weight_standardization:
