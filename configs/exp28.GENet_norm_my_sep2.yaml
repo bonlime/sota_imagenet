@@ -1,0 +1,33 @@
+# Reimplmentation of GENet normal model on my codebase
+# Main difference from exp 27 is usage of blocks of two Separable Convs instead of Inverted Residual
+# The idea is to avoid dimensionality reduction as much as possible. It has fewer parameters and runs faster 
+# It's expected to work better or at least at the same level as in exp27 
+
+name : exp28.GENet_norm_my_sep2
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["XX", "XX", "Sep2", "Sep2"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1},
+        {"bottle_ratio": 1},
+        {"bottle_ratio": 1},
+    ]
+    layers: [1, 2, 6, 5]
+    channels: [128, 192, 640, 640]
+
+
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
