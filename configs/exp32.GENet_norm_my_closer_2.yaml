@@ -5,7 +5,7 @@
 # 
 # it's different from 30 because it doesn't have mobilenetv3 head
 
-name : exp30.GENet_norm_my_closer
+name : exp32.GENet_norm_my_closer_2
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
