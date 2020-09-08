@@ -3,7 +3,7 @@
 # change number of filters and layers to be closer to RegNet and I personally think it should work better
 # should be compared to exp34
 
-name : exp34.GENet_preact_sep2
+name : exp35.GENet_preact_sep2_leaky_diff_stages
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
