@@ -5,7 +5,7 @@
 # increase accuracy
 # should be compared to exp35
 
-name : exp36.GENet_preact_sep2_leaky_diff_stages_exp->str
+name : exp36.GENet_preact_sep2_leaky_diff_stages_exp-str
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
