@@ -1,0 +1,37 @@
+# close to exp42 but replacing IR in last stage with Btl with larger number of channels
+# number of channels ~matches the number of parameters. 640 * 3 x 640 ~= 1024 ^ 2
+
+
+name : exp44.GENet_preact_Btl_last
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["Pre_XX", "Pre_XX", "Pre_Btl", "Pre_Btl"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"bottle_ratio": 0.25, "force_residual": True},
+        {"bottle_ratio": 1, "force_residual": True},
+    ]
+    stem_width: 32
+    head_width: 2560
+    norm_act: relu
+    stem_type: default
+    layers: [1, 2, 6, 5]
+    channels: [128, 192, 640, 1024]
+    mobilenetv3_head: False
+
+
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
