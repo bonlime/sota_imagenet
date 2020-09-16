@@ -6,8 +6,6 @@ from nvidia.dali.pipeline import Pipeline
 from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 from pytorch_tools.utils.misc import env_rank, env_world_size
 
-DATA_DIR = "data/"
-
 
 class HybridPipe(Pipeline):
     def __init__(
@@ -20,11 +18,12 @@ class HybridPipe(Pipeline):
         min_area=0.08,
         resize_method="linear",
         crop_method="",
+        data_dir="data/",
     ):
 
         local_rank, world_size = env_rank(), env_world_size()
         super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
-        data_dir = DATA_DIR + "320/" if sz < 224 and train else DATA_DIR + "raw-data/"
+        data_dir += "320/" if sz < 224 and train else "raw-data/"
         data_dir += "train/" if train else "val/"
         # only shuffle train data
         self.input = ops.FileReader(
@@ -117,6 +116,7 @@ class DaliLoader:
         resize_method="linear",
         crop_method="",
         classes_divisor=1,  # reduce number of classes by // cls_div
+        data_dir="data/",
     ):
         """Returns train or val iterator over Imagenet data"""
         pipe = HybridPipe(
@@ -128,6 +128,7 @@ class DaliLoader:
             min_area=min_area,
             resize_method=resize_method,
             crop_method=crop_method,
+            data_dir=data_dir,
         )
         pipe.build()
         self.loader = DALIClassificationIterator(

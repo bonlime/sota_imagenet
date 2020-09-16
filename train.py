@@ -99,8 +99,8 @@ def parse_args():
         help="By default use Imagenet 0.875 crop for validation. If `full` then resize shortest to `size` and take center crop. \
             It gives much higher accuracy with the same weights and is more practical",
     )
-    add_arg("--classes_divisor", type=int, default=1,
-            help="Used for reduction of number of classes")
+    add_arg("--classes_divisor", type=int, default=1, help="Used for reduction of number of classes")
+    add_arg("--data_dir", type=str, default="data/", help="Path to Imagenet Data")
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")
@@ -209,6 +209,7 @@ def main():
     elif FLAGS.arch == "GENet_normal":
         sys.path.append("/mnt/GPU-Efficient-Networks/")
         import GENet
+
         model = GENet.genet_normal(pretrained=False)
     else:
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
@@ -339,14 +340,15 @@ class DaliDataManager:
         FLAGS.sz = sz
         FLAGS.bs = bs
         trn_loader = DaliLoader(
-            True, 
+            True,
             FLAGS.bs,
             FLAGS.workers,
             FLAGS.sz,
             FLAGS.ctwist,
             FLAGS.min_area,
             FLAGS.resize_method,
-            classes_divisor=FLAGS.classes_divisor
+            classes_divisor=FLAGS.classes_divisor,
+            data_dir=FLAGS.data_dir,
         )
         FLAGS.sz = val_sz
         FLAGS.bs = val_bs
@@ -359,7 +361,8 @@ class DaliDataManager:
             FLAGS.min_area,
             FLAGS.resize_method,
             FLAGS.crop_method,
-            FLAGS.classes_divisor
+            FLAGS.classes_divisor,
+            data_dir=FLAGS.data_dir,
         )
         return trn_loader, val_loader
 
