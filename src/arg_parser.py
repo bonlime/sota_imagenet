@@ -70,7 +70,7 @@ def parse_args():
     )
     add_arg("--classes_divisor", type=int, default=1, help="Used for reduction of number of classes")
     add_arg("--data_dir", type=str, default="data/", help="Path to Imagenet Data")
-    add_arg("--tfrecords", action="store_true", help="Flag to read data from tfrecords instead of files")
+    add_arg("--use_tfrecords", action="store_true", help="Flag to read data from tfrecords instead of files")
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")

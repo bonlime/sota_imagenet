@@ -20,14 +20,14 @@ class HybridPipe(Pipeline):
         resize_method="linear",
         crop_method="",
         data_dir="data/",
-        tfrecords=False,
+        use_tfrecords=False,
     ):
 
         local_rank, world_size = env_rank(), env_world_size()
         super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
         
         # only shuffle train data
-        if tfrecords:
+        if use_tfrecords:
             records_files_f = data_dir + "/tfrecords/"
             records_files_f += "train-{:05d}-of-01024" if train else "validation-{:05d}-of-00128"
             records_files = [records_files_f.format(i) for i in range(1024 if train else 128)]
@@ -143,7 +143,7 @@ class DaliLoader:
         crop_method="",
         classes_divisor=1,  # reduce number of classes by // cls_div
         data_dir="data/",
-        tfrecords=False,
+        use_tfrecords=False,
     ):
         """Returns train or val iterator over Imagenet data"""
         pipe = HybridPipe(
@@ -156,7 +156,7 @@ class DaliLoader:
             resize_method=resize_method,
             crop_method=crop_method,
             data_dir=data_dir,
-            tfrecords=tfrecords,
+            use_tfrecords=use_tfrecords,
         )
         pipe.build()
         self.loader = DALIClassificationIterator(
