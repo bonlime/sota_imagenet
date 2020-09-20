@@ -1,5 +1,6 @@
 """Dali dataloader for imagenet"""
 import math
+import nvidia.dali as dali
 from nvidia.dali import ops
 from nvidia.dali import types
 from nvidia.dali.pipeline import Pipeline
@@ -19,20 +20,45 @@ class HybridPipe(Pipeline):
         resize_method="linear",
         crop_method="",
         data_dir="data/",
+        tfrecords=False,
     ):
 
         local_rank, world_size = env_rank(), env_world_size()
         super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
-        data_dir += "320/" if sz < 224 and train else "raw-data/"
-        data_dir += "train/" if train else "val/"
+        
         # only shuffle train data
-        self.input = ops.FileReader(
-            file_root=data_dir,
-            random_shuffle=train,
-            shard_id=local_rank,
-            num_shards=world_size,
-            # read_ahead=True,
-        )
+        if tfrecords:
+            records_files_f = data_dir + "/tfrecords/"
+            records_files_f += "train-{:05d}-of-01024" if train else "validation-{:05d}-of-00128"
+            records_files = [records_files_f.format(i) for i in range(1024 if train else 128)]
+            idx_files_f = data_dir + "/record_idxs/"
+            idx_files_f += "train-{:05d}-of-01024.idx" if train else "validation-{:05d}-of-00128.idx"
+            idx_files = [idx_files_f.format(i) for i in range(1024 if train else 128)]
+            self.input = dali.ops.TFRecordReader(
+                path=records_files,
+                index_path=idx_files,
+                random_shuffle=train,
+                initial_fill=10000,  # generate a lot of random numbers in advance	
+                features={	
+                    'image/encoded': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
+                    'image/height': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
+                    'image/width': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
+                    'image/class/label': dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64,  -1),
+                    'image/class/synset': dali.tfrecord.FixedLenFeature([], dali.tfrecord.string, ''),
+                    'image/colorspace': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
+                    'image/channels': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
+                    'image/format': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
+                    'image/filename': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, "")}
+            )	
+        else: 
+            data_dir += "320/" if sz < 224 and train else "raw-data/"
+            data_dir += "train/" if train else "val/"
+            self.input = ops.FileReader(
+                file_root=data_dir,
+                random_shuffle=train,
+                shard_id=local_rank,
+                num_shards=world_size,
+            )
         interp_type = types.INTERP_TRIANGULAR if resize_method == "linear" else types.INTERP_CUBIC
         if train:
             self.decode = ops.ImageDecoderRandomCrop(
@@ -117,6 +143,7 @@ class DaliLoader:
         crop_method="",
         classes_divisor=1,  # reduce number of classes by // cls_div
         data_dir="data/",
+        tfrecords=False,
     ):
         """Returns train or val iterator over Imagenet data"""
         pipe = HybridPipe(
@@ -129,6 +156,7 @@ class DaliLoader:
             resize_method=resize_method,
             crop_method=crop_method,
             data_dir=data_dir,
+            tfrecords=tfrecords,
         )
         pipe.build()
         self.loader = DALIClassificationIterator(
