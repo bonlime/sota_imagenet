@@ -101,11 +101,17 @@ class HybridPipe(Pipeline):
         self.rng2 = ops.Uniform(range=[0.85, 1.15])
         self.rng3 = ops.Uniform(range=[-15, 15])
         self.train = train
+        self.use_tfrecords = use_tfrecords
         self.ctwist = ctwist
 
     def define_graph(self):
         # Read images and labels
-        images, labels = self.input(name="Reader")
+        if self.use_tfrecords:
+            inputs = self.input(name="Reader")
+            images = inputs["image/encoded"]
+            labels = inputs["image/class/label"]
+        else:
+            images, labels = self.input(name="Reader")
 
         # Decode and augmentation
         images = self.decode(images)
