@@ -40,21 +40,7 @@ class HybridPipe(Pipeline):
                 random_shuffle=train,
                 initial_fill=10000,  # generate a lot of random numbers in advance	
                 features={
-                    'image/height': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
-                    'image/width': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
-                    'image/colorspace': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-                    'image/channels': dali.tfrecord.FixedLenFeature([1], dali.tfrecord.int64,  -1),
                     'image/class/label': dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64,  -1),
-                    'image/class/synset': dali.tfrecord.FixedLenFeature([], dali.tfrecord.string, ''),
-                    # TODO: remove
-                    'image/class/text': dali.tfrecord.FixedLenFeature([], dali.tfrecord.string, ''),
-                    'image/object/bbox/xmin': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/xmax': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/ymin': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/ymax': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/label': dali.tfrecord.VarLenFeature([], dali.tfrecord.int64,  -1),
-                    # till here
-                    'image/format': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
                     'image/filename': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
                     'image/encoded': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
                 }
