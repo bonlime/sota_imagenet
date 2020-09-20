@@ -276,6 +276,7 @@ def main():
     )
     if FLAGS.evaluate:
         dm.set_stage(0)
+        runner.callbacks.on_begin()
         return runner.evaluate(dm.val_dl)
 
     for idx in range(len(dm.stages)):
