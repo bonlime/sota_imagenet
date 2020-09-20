@@ -48,11 +48,11 @@ class HybridPipe(Pipeline):
                     'image/class/synset': dali.tfrecord.FixedLenFeature([], dali.tfrecord.string, ''),
                     # TODO: remove
                     'image/class/text': dali.tfrecord.FixedLenFeature([], dali.tfrecord.string, ''),
-                    'image/object/bbox/xmin': dali.tfrecord.FixedLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/xmax': dali.tfrecord.FixedLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/ymin': dali.tfrecord.FixedLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/ymax': dali.tfrecord.FixedLenFeature([], dali.tfrecord.float32,  -1),
-                    'image/object/bbox/label': dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64,  -1),
+                    'image/object/bbox/xmin': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
+                    'image/object/bbox/xmax': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
+                    'image/object/bbox/ymin': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
+                    'image/object/bbox/ymax': dali.tfrecord.VarLenFeature([], dali.tfrecord.float32,  -1),
+                    'image/object/bbox/label': dali.tfrecord.VarLenFeature([], dali.tfrecord.int64,  -1),
                     # till here
                     'image/format': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
                     'image/filename': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
