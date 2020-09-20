@@ -218,7 +218,7 @@ class DaliDataManager:
             FLAGS.resize_method,
             classes_divisor=FLAGS.classes_divisor,
             data_dir=FLAGS.data_dir,
-            use_tfrecords=use_tfrecords,
+            use_tfrecords=FLAGS.use_tfrecords,
         )
         FLAGS.sz = val_sz
         FLAGS.bs = val_bs
@@ -233,7 +233,7 @@ class DaliDataManager:
             FLAGS.crop_method,
             FLAGS.classes_divisor,
             data_dir=FLAGS.data_dir,
-            use_tfrecords=use_tfrecords,
+            use_tfrecords=FLAGS.use_tfrecords,
         )
         return trn_loader, val_loader
 
