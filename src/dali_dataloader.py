@@ -32,7 +32,7 @@ class HybridPipe(Pipeline):
             records_files_f += "train-{:05d}-of-01024" if train else "validation-{:05d}-of-00128"
             records_files = [records_files_f.format(i) for i in range(1024 if train else 128)]
             idx_files_f = data_dir + "/record_idxs/"
-            idx_files_f += "train-{:05d}-of-01024.idx" if train else "validation-{:05d}-of-00128.idx"
+            idx_files_f += "train-{:05d}-of-01024" if train else "validation-{:05d}-of-00128"
             idx_files = [idx_files_f.format(i) for i in range(1024 if train else 128)]
             self.input = dali.ops.TFRecordReader(
                 path=records_files,
