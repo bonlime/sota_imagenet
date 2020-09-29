@@ -2,7 +2,7 @@
 # number of channels ~matches the number of parameters. 640 * 3 x 640 ~= 1024 ^ 2
 # This version fixed gr width in last stage
 
-name : exp44.GENet_preact_Btl_last
+name : exp46.GENet_preact_Btl_last_fixed
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
