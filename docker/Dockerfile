@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:20.06-py3
+FROM nvcr.io/nvidia/pytorch:20.08-py3
 
 # base setup
 RUN apt-get update --fix-missing && \
