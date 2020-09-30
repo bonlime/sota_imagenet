@@ -1,7 +1,7 @@
-# close to exp46 but stage 3 changed from Btl to IR. All network is without dimensionality reduction
-# same as 47 + cutmix augmentation
+# close to 48
+# but stage 3 changed from 6 x 640 => 10 x 480
 
-name : exp48.GENet_no_dim_red_ctmx
+name : exp49.GENet_no_dim_red_ctmx_deeper
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -16,8 +16,8 @@ model_params:
     head_width: 2560
     norm_act: leaky_relu
     stem_type: s2d
-    layers: [1, 2, 6, 5]
-    channels: [128, 192, 640, 1024]
+    layers: [1, 2, 10, 5]
+    channels: [128, 192, 480, 1024]
     mobilenetv3_head: False
 
 cutmix: 1.0
