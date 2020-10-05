@@ -1,6 +1,6 @@
 # close to exp52 & 53
 # but with 3 layer MLP in head to compensate for small number of filters in the head
-# 18.81M params
+# 19.07M params
 
 
 name : exp54.GEnet_wider_mlp3

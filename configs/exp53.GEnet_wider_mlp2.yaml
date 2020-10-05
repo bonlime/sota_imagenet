@@ -1,7 +1,6 @@
 # close to exp52 
 # but with 2 layer MLP in head to compensate for small number of filters in the head
-# 17.56M params 
-
+# 17.82M params 
 
 name : exp53.GEnet_wider_mlp2
 arch : BNet
