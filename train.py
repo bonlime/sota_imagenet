@@ -34,7 +34,6 @@ from src.arg_parser import parse_args
 from src.dali_dataloader import DaliLoader
 
 
-
 FLAGS = parse_args()
 # makes it slightly faster
 cudnn.benchmark = True
@@ -101,9 +100,7 @@ def main():
     )
 
     if FLAGS.resume:
-        checkpoint = torch.load(
-            FLAGS.resume, map_location=lambda storage, loc: storage.cuda(FLAGS.local_rank),
-        )
+        checkpoint = torch.load(FLAGS.resume, map_location=lambda storage, loc: storage.cuda(FLAGS.local_rank),)
         model.load_state_dict(checkpoint["state_dict"], strict=False)
         FLAGS.start_epoch = checkpoint["epoch"]
         print("Checkpoint best epoch: ", checkpoint["epoch"])
@@ -139,9 +136,7 @@ def main():
         callbacks.extend(
             [pt_clb.Timer(), pt_clb.ConsoleLogger(), pt_clb.TensorBoard(OUTDIR, log_every=25),]
         )
-    runner = pt.fit_wrapper.Runner(
-        model, optimizer, criterion, callbacks=callbacks, use_fp16=FLAGS.opt_level != "O0",
-    )
+    runner = pt.fit_wrapper.Runner(model, optimizer, criterion, callbacks=callbacks, use_fp16=FLAGS.opt_level != "O0",)
     if FLAGS.evaluate:
         dm.set_stage(0)
         runner.callbacks.on_begin()
@@ -157,6 +152,8 @@ def main():
             epochs=dm.stage_len + dm.stages[idx]["ep"],
             start_epoch=dm.stages[idx]["ep"],
         )
+    # print number of params again for easier copy-paste
+    logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
     return runner.state.val_loss.avg, runner.state.val_metrics
 
 
