@@ -1,9 +1,9 @@
 # close to best experiment so far (exp48)
 # + weight standardization
 # + AdamP instead of default SGD. changed lr from 0.2 -> 0.002
-# AdamP uses default value of wd=3e-5 as in all previous experiments!
+# + very high wd as suggested in Novograd paper
 
-name : exp57.GENet_no_dim_red_ctmx_ws_adamp
+name : exp58.GENet_no_dim_red_ctmx_ws_adamp_high-wd
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -25,7 +25,9 @@ model_params:
 optim: adamp
 weight_standardization: True
 cutmix: 1.0
-weight_decay : 3e-5
+# in Novograd they use 0.12 but their BS is 2 times larger. For 2 GPUs it should be 0.12 * 0.12 ~0.01
+# but because i'm using AdamP i'll set it even smaller to 1e-3
+weight_decay : 0.001
 smooth: true
 
 ctwist: true

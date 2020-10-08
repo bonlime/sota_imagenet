@@ -1,9 +1,9 @@
 # close to best experiment so far (exp48)
-# + weight standardization
-# + AdamP instead of default SGD. changed lr from 0.2 -> 0.002
-# AdamP uses default value of wd=3e-5 as in all previous experiments!
+# + Novograd instead of default SGD
+# I'm using default parameters from Novograd paper
+# + WS
 
-name : exp57.GENet_no_dim_red_ctmx_ws_adamp
+name : exp60.GENet_no_dim_red_ctmx_ws_nov
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -22,10 +22,12 @@ model_params:
     channels: [128, 192, 640, 1024]
     head_type: default
 
-optim: adamp
+optim: fused_novograd
 weight_standardization: True
 cutmix: 1.0
-weight_decay : 3e-5
+# in Novograd they use 0.12 but their BS is 2 times larger. For 2 GPUs it should be 0.12 * 0.12 ~0.01
+# but because i'm using AdamP i'll set it even smaller to 1e-3
+weight_decay : 0.002
 smooth: true
 
 ctwist: true
@@ -35,6 +37,6 @@ ema_decay: 0.9993
 # lr should be BS/256 * 0.1
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 8], "lr": [0, 0.002], "mom": 0.9},
-    {"ep": [8, 90], "lr": [0.002, 0], "mom": 0.9, "mode": "cos"},
+    {"ep": [0, 8], "lr": [0, 0.007]},
+    {"ep": [8, 90], "lr": [0.007, 0], "mode": "cos"},
 ]
