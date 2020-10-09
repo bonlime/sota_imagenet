@@ -20,7 +20,7 @@ model_params:
     stem_type: s2d
     layers: [1, 2, 6, 5]
     channels: [128, 192, 640, 1024]
-    mobilenetv3_head: False
+    head_type: "default"
 
 cutmix: 1.0
 weight_decay : 3e-5
