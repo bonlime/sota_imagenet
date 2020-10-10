@@ -25,7 +25,7 @@ class HybridPipe(Pipeline):
 
         local_rank, world_size = env_rank(), env_world_size()
         super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
-        
+
         # only shuffle train data
         if use_tfrecords:
             records_files_f = data_dir + "/tfrecords/"
@@ -38,21 +38,18 @@ class HybridPipe(Pipeline):
                 path=records_files,
                 index_path=idx_files,
                 random_shuffle=train,
-                initial_fill=10000,  # generate a lot of random numbers in advance	
+                initial_fill=10000,  # generate a lot of random numbers in advance
                 features={
-                    'image/class/label': dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64,  -1),
-                    'image/filename': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-                    'image/encoded': dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-                }
-            )	
-        else: 
+                    "image/class/label": dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64, -1),
+                    "image/filename": dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
+                    "image/encoded": dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
+                },
+            )
+        else:
             data_dir += "320/" if sz < 224 and train else "raw-data/"
             data_dir += "train/" if train else "val/"
             self.input = ops.FileReader(
-                file_root=data_dir,
-                random_shuffle=train,
-                shard_id=local_rank,
-                num_shards=world_size,
+                file_root=data_dir, random_shuffle=train, shard_id=local_rank, num_shards=world_size,
             )
         interp_type = types.INTERP_TRIANGULAR if resize_method == "linear" else types.INTERP_CUBIC
         if train:
@@ -84,8 +81,7 @@ class HybridPipe(Pipeline):
             crop=(sz, sz),
             mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
             std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
-            image_type=types.RGB,
-            output_dtype=types.FLOAT,
+            dtype=types.FLOAT,
             output_layout=types.NCHW,
         )
         self.coin = ops.CoinFlip()
@@ -120,9 +116,7 @@ class HybridPipe(Pipeline):
             if self.ctwist:
                 images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
                 images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
-            images = self.normalize(
-                images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1()
-            )
+            images = self.normalize(images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
         else:
             images = self.normalize(images)
 
@@ -161,11 +155,7 @@ class DaliLoader:
         )
         pipe.build()
         self.loader = DALIClassificationIterator(
-            pipe,
-            size=pipe.epoch_size("Reader") / env_world_size(),
-            auto_reset=True,
-            fill_last_batch=train,  # want real accuracy on validiation
-            last_batch_padded=True,  # want epochs to have the same length
+            pipe, reader_name="Reader", auto_reset=True, fill_last_batch=train,  # want real accuracy on validiation
         )
         self.cls_div = classes_divisor
 
