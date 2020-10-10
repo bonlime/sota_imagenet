@@ -1,0 +1,39 @@
+# close to exp64
+# * using PW -> PW -> DW blocks
+# * using totally different number of layers/channels in each stage
+# * (!) using filter steps to gradually increase filter size 
+# 9M params. 4700 imgs/sec forward
+
+name : exp65.BNet_small_steps
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["Pre_XX", "Pre_XX", "Pre_Custom_2", "Pre_Custom_2"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"bottle_ratio": 1, "dw_str2_kernel_size": 9, "filter_steps": 32},
+        {"bottle_ratio": 1, "dw_str2_kernel_size": 9, "filter_steps": 128},
+    ]
+    stem_width: 32
+    head_width: 2560
+    norm_act: leaky_relu
+    stem_type: s2d
+    layers: [2, 4, 8, 2]
+    channels: [64, 128, 256, 512]
+    head_type: default
+
+cutmix: 1.0
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
