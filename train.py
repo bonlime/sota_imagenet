@@ -86,14 +86,23 @@ def main():
     model = model.cuda()
     optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
 
+    if FLAGS.sigmoid_trick:
+        if hasattr(model, "last_linear"):  # speedup convergence
+            nn.init.constant_(model.last_linear.bias, -4.59)
+            print("Using sigmoid trick")
+
     # define loss function (criterion) and optimizer
     # it's a good idea to use smooth with mixup but don't force it
     # FLAGS.smooth = FLAGS.smooth or FLAGS.mixup
-    if FLAGS.sigmoid:
+    if FLAGS.criterion == "cce":
+        # dirty way to support older code. TODO: rewrite
+        FLAGS.criterion_params["smoothing"] = 0.1 if FLAGS.smooth else 0.0
+        criterion = pt.losses.CrossEntropyLoss(**FLAGS.criterion_params).cuda()
+    elif FLAGS.criterion == "sigmoid":
         # use reduction sum just to have bigger numbers in logs
-        criterion = torch.nn.MultiLabelSoftMarginLoss(reduction="sum").cuda()
-    else:
-        criterion = pt.losses.CrossEntropyLoss(smoothing=0.1 if FLAGS.smooth else 0.0).cuda()
+        criterion = torch.nn.MultiLabelSoftMarginLoss(**FLAGS.criterion_params).cuda()
+    elif FLAGS.criterion == "red_focal":
+        criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
     # start with 0 lr. Scheduler will change this later
     optimizer = optimizer_from_name(FLAGS.optim)(
         optim_params, lr=0, weight_decay=FLAGS.weight_decay, **FLAGS.optim_params

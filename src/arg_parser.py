@@ -29,11 +29,10 @@ def parse_args():
     )
     add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
     add_arg(
-        "--weight_standardization",
-        action="store_true",
-        help="Change convs to WS Convs. See paper for details",
+        "--weight_standardization", action="store_true", help="Change convs to WS Convs. See paper for details",
     )
     add_arg("--ema_decay", type=float, default=0, help="If not zero, enables EMA decay for model weights")
+    add_arg("--sigmoid_trick", action="store_true", help="If True sets last bias to speedup convergence")
 
     ## OPTIMIZER
     add_arg("--optim", type=str, default="SGD", help="Optimizer to use (default: sgd)")
@@ -57,9 +56,7 @@ def parse_args():
     )
     add_arg("--cutmix_prob", type=float, default=0.5)
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
-    add_arg(
-        "--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type"
-    )
+    add_arg("--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type")
     add_arg(
         "--crop_method",
         type=str,
@@ -74,7 +71,8 @@ def parse_args():
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")
-    add_arg("--sigmoid", action="store_true", help="Use sigmoid instead of softmax")
+    add_arg("--criterion", type=str, default="cce", help="Criterion to use")
+    add_arg("--criterion_params", type=eval, default={}, help="Additional loss params as kwargs")
 
     ## TRAINING
     add_arg(
@@ -111,12 +109,7 @@ def parse_args():
     ## LOGGING
     add_arg("--logdir", default="logs", type=str, help="where logs go")
     add_arg(
-        "-n",
-        "--name",
-        type=str,
-        default="",
-        dest="name",
-        help="Name of this run. If empty it would be a timestamp",
+        "-n", "--name", type=str, default="", dest="name", help="Name of this run. If empty it would be a timestamp",
     )
     add_arg("--no_timestamp", action="store_true", help="Disables adding timestamp to run name")
 
