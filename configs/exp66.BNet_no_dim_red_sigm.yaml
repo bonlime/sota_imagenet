@@ -18,11 +18,11 @@ model_params:
     stem_type: s2d
     layers: [1, 2, 6, 5]
     channels: [128, 192, 640, 1024]
-    mobilenetv3_head: False
+    head_type: default
 
 criterion: sigmoid
 criterion_params:
-  - reduction: sum # use sum to have bigger values
+  reduction: sum # use sum to have bigger values
 cutmix: 1.0
 weight_decay : 3e-5
 smooth: true
