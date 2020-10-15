@@ -1,7 +1,8 @@
 # close to exp48
-# but using sigmoid loss + sigmoid trick
+# but using reduced focal loss + sigmoid trick
+# + smooth
 
-name : exp67.BNet_no_dim_red_sigm_trick
+name : exp69.BNet_no_dim_red_focal_sm
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -21,12 +22,15 @@ model_params:
     head_type: default
 
 sigmoid_trick: True
-criterion: sigmoid
+criterion: focal
 criterion_params:
-  reduction: sum # use sum to have bigger values
+    combine_thr: 0.5
+    alpha: -1
+    reduction: sum
+
 cutmix: 1.0
 weight_decay : 3e-5
-smooth: false # False for sigmoid
+smooth: true # False for sigmoid
 
 ctwist: true
 # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
@@ -35,6 +39,6 @@ ema_decay: 0.9993
 # lr should be BS/256 * 0.1
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
-    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+    {"ep": [0, 8], "lr": [0, 0.01], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.01, 0], "mom": 0.9, "mode": "cos"},
 ]
