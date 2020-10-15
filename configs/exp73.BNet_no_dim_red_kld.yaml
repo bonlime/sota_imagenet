@@ -1,8 +1,7 @@
-# close to exp48 -> exp68 
-# + increased alpha values 
-# + novograd optimizer
+# close to exp48 & exp66-72
+# but with the most suitable loss - KLD
 
-name : exp71.BNet_no_dim_red_focal_alpha_nov
+name : exp73.BNet_no_dim_red_kld
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -21,17 +20,12 @@ model_params:
     channels: [128, 192, 640, 1024]
     head_type: default
 
-optim: novograd
-sigmoid_trick: True
-criterion: focal
+criterion: kld
 criterion_params:
-    combine_thr: 0.5
-    alpha: 0.25
-    reduction: sum
-
+  reduction: sum # use sum to have bigger values
 cutmix: 1.0
 weight_decay : 3e-5
-smooth: false # False for sigmoid
+smooth: true
 
 ctwist: true
 # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
@@ -40,6 +34,6 @@ ema_decay: 0.9993
 # lr should be BS/256 * 0.1
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 8], "lr": [0, 0.4], "mom": 0.9},
-    {"ep": [8, 90], "lr": [0.4, 0], "mom": 0.9, "mode": "cos"},
+    {"ep": [0, 8], "lr": [0, 0.01], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.01, 0], "mom": 0.9, "mode": "cos"},
 ]

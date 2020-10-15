@@ -99,10 +99,11 @@ def main():
         FLAGS.criterion_params["smoothing"] = 0.1 if FLAGS.smooth else 0.0
         criterion = pt.losses.CrossEntropyLoss(**FLAGS.criterion_params).cuda()
     elif FLAGS.criterion == "sigmoid":
-        # use reduction sum just to have bigger numbers in logs
         criterion = torch.nn.MultiLabelSoftMarginLoss(**FLAGS.criterion_params).cuda()
     elif FLAGS.criterion == "focal":
         criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
+    elif FLAGS.criterion == "kld":  # the most suitable loss for sigmoid output with cutmix
+        criterion = pt.losses.BinaryKLDivLoss(**FLAGS.criterion_params).cuda()
     # start with 0 lr. Scheduler will change this later
     optimizer = optimizer_from_name(FLAGS.optim)(
         optim_params, lr=0, weight_decay=FLAGS.weight_decay, **FLAGS.optim_params
