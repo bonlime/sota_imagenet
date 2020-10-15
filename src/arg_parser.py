@@ -57,17 +57,9 @@ def parse_args():
     add_arg("--cutmix_prob", type=float, default=0.5)
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
     add_arg("--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type")
-    add_arg(
-        "--crop_method",
-        type=str,
-        default="",
-        choices=["", "full"],
-        help="By default use Imagenet 0.875 crop for validation. If `full` then resize shortest to `size` and take center crop. \
-            It gives much higher accuracy with the same weights and is more practical",
-    )
     add_arg("--classes_divisor", type=int, default=1, help="Used for reduction of number of classes")
-    add_arg("--data_dir", type=str, default="data/", help="Path to Imagenet Data")
     add_arg("--use_tfrecords", action="store_true", help="Flag to read data from tfrecords instead of files")
+    add_arg("--rect_validation", action="store_true", help="Flag to perform validation on rectangles")
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")
