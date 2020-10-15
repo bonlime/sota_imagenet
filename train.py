@@ -31,7 +31,7 @@ from pytorch_tools.utils.misc import listify
 from pytorch_tools.optim import optimizer_from_name
 
 from src.arg_parser import parse_args
-from src.dali_dataloader import DaliLoader
+from src.dali_dataloader import DaliLoader, ValRectLoader
 
 
 FLAGS = parse_args()
@@ -149,7 +149,8 @@ def main():
     if FLAGS.evaluate:
         dm.set_stage(0)
         runner.callbacks.on_begin()
-        return runner.evaluate(dm.val_dl)
+        runner.evaluate(dm.val_dl)
+        return runner.state.loss_meter.avg, runner.state.metric_meters
 
     for idx in range(len(dm.stages)):
         dm.set_stage(idx)
@@ -212,35 +213,29 @@ class DaliDataManager:
             val_bs = 250
         else:
             val_bs = 125
-        FLAGS.sz = sz
-        FLAGS.bs = bs
         trn_loader = DaliLoader(
-            True,
-            FLAGS.bs,
-            FLAGS.workers,
-            FLAGS.sz,
-            FLAGS.ctwist,
-            FLAGS.min_area,
-            FLAGS.resize_method,
+            train=True,
+            bs=bs,
+            workers=FLAGS.workers,
+            sz=sz,
+            ctwist=FLAGS.ctwist,
+            min_area=FLAGS.min_area,
+            resize_method=FLAGS.resize_method,
             classes_divisor=FLAGS.classes_divisor,
-            data_dir=FLAGS.data_dir,
             use_tfrecords=FLAGS.use_tfrecords,
         )
-        FLAGS.sz = val_sz
-        FLAGS.bs = val_bs
-        val_loader = DaliLoader(
-            False,
-            FLAGS.bs,
-            FLAGS.workers,
-            FLAGS.sz,
-            FLAGS.ctwist,
-            FLAGS.min_area,
-            FLAGS.resize_method,
-            FLAGS.crop_method,
-            FLAGS.classes_divisor,
-            data_dir=FLAGS.data_dir,
-            use_tfrecords=FLAGS.use_tfrecords,
-        )
+        if FLAGS.rect_validation:
+            val_loader = ValRectLoader(bs=val_bs, workers=FLAGS.workers, sz=val_sz, resize_method=FLAGS.resize_method)
+        else:
+            val_loader = DaliLoader(
+                False,
+                bs=val_bs,
+                workers=FLAGS.workers,
+                sz=val_sz,
+                resize_method=FLAGS.resize_method,
+                classes_divisor=FLAGS.classes_divisor,
+                use_tfrecords=FLAGS.use_tfrecords,
+            )
         return trn_loader, val_loader
 
 
