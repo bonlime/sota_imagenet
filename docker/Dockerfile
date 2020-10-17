@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:20.08-py3
+FROM nvcr.io/nvidia/pytorch:20.09-py3
 
 # base setup
 RUN apt-get update --fix-missing && \
@@ -18,7 +18,7 @@ RUN pip --no-cache-dir install --upgrade \
 # install timm models library & inplace abn. to avoid building them each time later
 RUN pip --no-cache-dir install --upgrade \
     git+https://github.com/rwightman/pytorch-image-models@master \
-    inplace-abn==1.0.12 
+    inplace-abn==1.1.0 
 
 # adding this VAR to force update of pytorch-tools each time
 ARG RANDOM_VAR=none
