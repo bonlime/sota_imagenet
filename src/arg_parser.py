@@ -65,6 +65,7 @@ def parse_args():
     add_arg("--smooth", action="store_true", help="Use label smoothing")
     add_arg("--criterion", type=str, default="cce", help="Criterion to use")
     add_arg("--criterion_params", type=eval, default={}, help="Additional loss params as kwargs")
+    add_arg("--hard_pct", type=float, default=0.0, help="If large that zero, wraps loss in HardNegativeMiner")
 
     ## TRAINING
     add_arg(

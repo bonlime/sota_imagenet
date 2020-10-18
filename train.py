@@ -32,7 +32,7 @@ from pytorch_tools.optim import optimizer_from_name
 
 from src.arg_parser import parse_args
 from src.dali_dataloader import DaliLoader, ValRectLoader
-
+from src.utils import HardNegativeWrapper
 
 FLAGS = parse_args()
 # makes it slightly faster
@@ -104,6 +104,9 @@ def main():
         criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "kld":  # the most suitable loss for sigmoid output with cutmix
         criterion = pt.losses.BinaryKLDivLoss(**FLAGS.criterion_params).cuda()
+
+    if FLAGS.hard_pct > 0:  # maybe wrap with HNM
+        criterion = HardNegativeWrapper(criterion, FLAGS.hard_pct)
     # start with 0 lr. Scheduler will change this later
     optimizer = optimizer_from_name(FLAGS.optim)(
         optim_params, lr=0, weight_decay=FLAGS.weight_decay, **FLAGS.optim_params
