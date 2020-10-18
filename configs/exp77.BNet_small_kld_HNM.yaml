@@ -3,7 +3,7 @@
 # + mean reduction
 # + hard negative miner
 
-name : exp77.BNet_small_kld_HNM
+name : exp77.BNet_small_kld_HNM_estimated
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -23,7 +23,9 @@ model_params:
     head_type: default
 
 
-
+optim: novograd
+optim_params:
+    init_zero: True # don't want to use first momentum 
 criterion: kld
 sigmoid_trick: True
 criterion_params:
@@ -40,6 +42,6 @@ ema_decay: 0.9993
 # lr should be BS/256 * 0.1
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 8], "lr": [0, 0.05], "mom": 0.9},
-    {"ep": [8, 90], "lr": [0.05, 0], "mom": 0.9, "mode": "cos"},
+    {"ep": [0, 8], "lr": [0, 0.4], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.4, 0], "mom": 0.9, "mode": "cos"},
 ]
