@@ -98,6 +98,7 @@ def parse_args():
         + "or automatically set by using 'python -m multiproc'.",
     )
     add_arg("--deterministic", action="store_true")
+    add_arg("--accumulate_steps", type=int, default=1, help="Num steps for gradient accumulation")
 
     ## LOGGING
     add_arg("--logdir", default="logs", type=str, help="where logs go")

@@ -149,7 +149,14 @@ def main():
         callbacks.extend(
             [pt_clb.Timer(), pt_clb.ConsoleLogger(), pt_clb.TensorBoard(OUTDIR, log_every=25),]
         )
-    runner = pt.fit_wrapper.Runner(model, optimizer, criterion, callbacks=callbacks, use_fp16=FLAGS.opt_level != "O0",)
+    runner = pt.fit_wrapper.Runner(
+        model,
+        optimizer,
+        criterion,
+        callbacks=callbacks,
+        use_fp16=FLAGS.opt_level != "O0",
+        accumulate_steps=FLAGS.accumulate_steps,
+    )
     if FLAGS.evaluate:
         dm.set_stage(0)
         runner.callbacks.on_begin()
