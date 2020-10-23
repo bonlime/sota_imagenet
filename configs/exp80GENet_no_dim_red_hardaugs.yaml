@@ -1,0 +1,43 @@
+# close to exp47 
+# + jitter
+# + random interpolation
+# + RectValidation
+
+name : exp47.GENet_no_dim_red
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["Pre_XX", "Pre_XX", "Pre_IR", "Pre_IR"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+    ]
+    stem_width: 32
+    head_width: 2560
+    norm_act: leaky_relu
+    stem_type: s2d
+    layers: [1, 2, 6, 5]
+    channels: [128, 192, 640, 1024]
+    head_type: default
+
+
+weight_decay : 3e-5
+smooth: true
+
+# cutmix: 1.0 # no cutmix in this exp
+jitter: true
+random_interpolation: true
+rect_validation: true
+resize_method: cubic
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]

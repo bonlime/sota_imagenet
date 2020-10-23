@@ -30,7 +30,7 @@ criterion: kld
 sigmoid_trick: True
 criterion_params:
   reduction: none
-hard_pct: 0.02 # use only 2% percent
+hard_pct: 0.05 # use only 2% percent
 cutmix: 1.0
 weight_decay : 3e-5
 smooth: false
