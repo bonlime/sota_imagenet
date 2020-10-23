@@ -56,10 +56,20 @@ def parse_args():
     )
     add_arg("--cutmix_prob", type=float, default=0.5)
     add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
-    add_arg("--resize_method", type=str, default="linear", choices=["linear", "cubic"], help="Interpolation type")
+    add_arg("--resize_method", type=str, default="triang", help="Interpolation type")
+    add_arg(
+        "--crop_method",
+        type=str,
+        default="default",
+        choices=["default", "full"],
+        help="If `full` take crops from full imagem not 1.14% resized as default",
+    )
     add_arg("--classes_divisor", type=int, default=1, help="Used for reduction of number of classes")
     add_arg("--use_tfrecords", action="store_true", help="Flag to read data from tfrecords instead of files")
     add_arg("--rect_validation", action="store_true", help="Flag to perform validation on rectangles")
+    add_arg("--jitter", action="store_true", help="Flag to add jitter augmentation")
+    add_arg("--random_interpolation", action="store_true", help="Flag to use random interpolation for train")
+    add_arg("--fixmatch", action="store_true", help="Flag to use fixmatch technique augmentation")
 
     ## CRITERION
     add_arg("--smooth", action="store_true", help="Use label smoothing")

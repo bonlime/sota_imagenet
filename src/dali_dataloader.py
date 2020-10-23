@@ -1,5 +1,7 @@
 """Dali dataloader for imagenet"""
 import math
+import torch
+import random
 import numpy as np
 from PIL import Image
 from pathlib import Path
@@ -7,7 +9,7 @@ import nvidia.dali as dali
 from nvidia.dali import ops
 from nvidia.dali import types
 from nvidia.dali.pipeline import Pipeline
-from nvidia.dali.plugin.pytorch import DALIClassificationIterator
+from nvidia.dali.plugin.pytorch import DALIGenericIterator, DALIClassificationIterator
 from pytorch_tools.utils.misc import env_rank, env_world_size
 
 ROOT_DATA_DIR = "data/"  # images should be mounted or linked to data/ folder inside this repo
@@ -120,7 +122,13 @@ class ValRectLoader:
         return ((batch[0]["data"], batch[0]["label"].squeeze().long()) for batch in self.loader)
 
 
-class HybridPipe(Pipeline):
+def mix(condition, true_case, false_case):
+    """multiplex between two images"""
+    neg_condition = condition ^ True
+    return condition * true_case + neg_condition * false_case
+
+
+class DefaultPipe(Pipeline):
     def __init__(
         self,
         train=False,
@@ -128,13 +136,16 @@ class HybridPipe(Pipeline):
         workers=4,
         sz=224,
         ctwist=True,
+        jitter=False,
         min_area=0.08,
-        resize_method="linear",
+        resize_method="triang",
+        crop_method="default",
+        random_interpolation=False,  # if given ignores `resize_method` and uses random
         use_tfrecords=False,
     ):
 
         local_rank, world_size = env_rank(), env_world_size()
-        super(HybridPipe, self).__init__(bs, workers, local_rank, seed=42)
+        super().__init__(bs, workers, local_rank, seed=42)
 
         # only shuffle train data
         if use_tfrecords:
@@ -161,28 +172,33 @@ class HybridPipe(Pipeline):
             self.input = ops.FileReader(
                 file_root=data_dir, random_shuffle=train, shard_id=local_rank, num_shards=world_size,
             )
-        interp_type = types.INTERP_TRIANGULAR if resize_method == "linear" else types.INTERP_CUBIC
-        if train:
-            self.decode = ops.ImageDecoderRandomCrop(
-                output_type=types.RGB,
-                device="mixed",
-                random_aspect_ratio=[0.75, 1.25],
-                random_area=[min_area, 1.0],
-                num_attempts=100,
-            )
-            # resize doesn't preserve aspect ratio on purpose
-            # works much better with INTERP_TRIANGULAR
-            self.resize = ops.Resize(device="gpu", interp_type=interp_type, resize_x=sz, resize_y=sz,)
-        else:
-            self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
-            # default Imagenet crop. 14% bigger and dividable by 16 then center crop
-            crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16)
-            self.resize = ops.Resize(device="gpu", interp_type=interp_type, resize_shorter=crop_size,)
-        # color augs
-        self.contrast = ops.BrightnessContrast(device="gpu")
-        self.hsv = ops.Hsv(device="gpu")
+        self.train_decode = ops.ImageDecoderRandomCrop(
+            output_type=types.RGB,
+            device="mixed",
+            random_aspect_ratio=[0.75, 1.25],
+            random_area=[min_area, 1.0],
+            num_attempts=100,
+        )
+        self.val_decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
+        RESIZE_DICT = {
+            "nn": types.INTERP_NN,
+            "linear": types.INTERP_LINEAR,
+            "triang": types.INTERP_TRIANGULAR,
+            "cubic": types.INTERP_CUBIC,
+            "lancz": types.INTERP_LANCZOS3,
+        }
+        # train resize doesn't preserve aspect ratio on purpose
+        # works much better with INTERP_TRIANGULAR
+        self.train_resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method], resize_x=sz, resize_y=sz)
+        # need all types of resize to support random interpolation
+        self.resize_lin = ops.Resize(device="gpu", interp_type=types.INTERP_LINEAR, resize_x=sz, resize_y=sz)
+        self.resize_tri = ops.Resize(device="gpu", interp_type=types.INTERP_TRIANGULAR, resize_x=sz, resize_y=sz)
+        self.resize_cub = ops.Resize(device="gpu", interp_type=types.INTERP_CUBIC, resize_x=sz, resize_y=sz)
+        self.resize_lan = ops.Resize(device="gpu", interp_type=types.INTERP_LANCZOS3, resize_x=sz, resize_y=sz)
 
-        self.jitter = ops.Jitter(device="gpu")
+        # default Imagenet crop. 14% bigger and dividable by 16 then center crop
+        crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16) if crop_method == "default" else sz
+        self.val_resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method], resize_shorter=crop_size)
         self.normalize = ops.CropMirrorNormalize(
             device="gpu",
             crop=(sz, sz),
@@ -191,16 +207,29 @@ class HybridPipe(Pipeline):
             dtype=types.FLOAT,
             output_layout=types.NCHW,
         )
+        # additional train augs
+        self.contrast = ops.BrightnessContrast(device="gpu")
+        self.hsv = ops.Hsv(device="gpu")
+        self.jitter_op = ops.Jitter(device="gpu")
         self.coin = ops.CoinFlip()
+        self.bool = ops.Cast(dtype=types.DALIDataType.BOOL)
         # jitter is a very strong aug want to have it rarely
-        self.coin_jitter = ops.CoinFlip(probability=0.1)
-
-        self.rng1 = ops.Uniform(range=[0, 1])
-        self.rng2 = ops.Uniform(range=[0.85, 1.15])
-        self.rng3 = ops.Uniform(range=[-15, 15])
+        self.coin_jitter = ops.CoinFlip(probability=0.2)
+        self.rng1 = ops.Uniform(range=[0, 1])  # for crop
+        self.rng2 = ops.Uniform(range=[0.85, 1.15])  # for color augs
+        self.rng3 = ops.Uniform(range=[-15, 15])  # for hue
         self.train = train
         self.use_tfrecords = use_tfrecords
         self.ctwist = ctwist
+        self.use_jitter = jitter
+        self.random_interpolation = random_interpolation
+
+    def _train_resize(self, images):
+        if not self.random_interpolation:
+            return self.train_resize(images)
+        lin_tri = mix(self.bool(self.coin()), self.resize_lin(images), self.resize_tri(images))
+        cub_lan = mix(self.bool(self.coin()), self.resize_cub(images), self.resize_lan(images))
+        return mix(self.bool(self.coin()), lin_tri, cub_lan)
 
     def define_graph(self):
         # Read images and labels
@@ -212,22 +241,49 @@ class HybridPipe(Pipeline):
             images, labels = self.input(name="Reader")
 
         # Decode and augmentation
-        images = self.decode(images)
-        # remove jitter for now. turn on for longer schedules for stronger regularization
-        # if self.train and self.ctwist:
-        #    # want to jitter before resize so that following op smoothes the jitter
-        #    images = self.jitter(images, mask=self.coin_jitter())
-        images = self.resize(images)
-
         if self.train:
+            images = self.train_decode(images)
+            if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
+                images = self.jitter_op(images, mask=self.coin_jitter())
+            images = self._train_resize(images)
             if self.ctwist:
                 images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
                 images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
             images = self.normalize(images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
         else:
+            images = self.val_decode(images)
+            images = self.val_resize(images)
             images = self.normalize(images)
 
         return images, labels.gpu()
+
+
+class FixMatchPipe(DefaultPipe):
+    """pipe which returns augmented and non augmented versions of the same image"""
+
+    def define_graph(self):
+        # Read images and labels
+        if self.use_tfrecords:
+            inputs = self.input(name="Reader")
+            images = inputs["image/encoded"]
+            labels = inputs["image/class/label"]
+        else:
+            images, labels = self.input(name="Reader")
+        ## Process val first
+        val_images = self.val_decode(images)
+        val_images = self.val_resize(val_images)
+        val_images = self.normalize(val_images)
+        ## Decode and augment train
+        images = self.train_decode(images)
+        if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
+            images = self.jitter_op(images, mask=self.coin_jitter())
+        images = self._train_resize(images)
+        if self.ctwist:
+            images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
+            images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
+        images = self.normalize(images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
+
+        return images, val_images, labels.gpu()
 
 
 class DaliLoader:
@@ -241,31 +297,45 @@ class DaliLoader:
         sz=224,
         ctwist=True,
         min_area=0.08,
-        resize_method="linear",
+        resize_method="triang",
         classes_divisor=1,  # reduce number of classes by // cls_div
         use_tfrecords=False,
+        crop_method="default",  # one of `default` or `full`
+        jitter=False,  # use pixel jitter augmentation
+        random_interpolation=False,
+        fixmatch=False,  # doubles the size of BS by also returning non augmented copies of image
     ):
         """Returns train or val iterator over Imagenet data"""
-        pipe = HybridPipe(
+        fixmatch = fixmatch and train  # only changes train behavior
+        pipe = (FixMatchPipe if fixmatch else DefaultPipe)(
             train=train,
             bs=bs,
             workers=workers,
             sz=sz,
             ctwist=ctwist,
+            jitter=jitter,
             min_area=min_area,
             resize_method=resize_method,
+            crop_method=crop_method,
             use_tfrecords=use_tfrecords,
+            random_interpolation=random_interpolation,
         )
         pipe.build()
-        self.loader = DALIClassificationIterator(
-            pipe, reader_name="Reader", auto_reset=True, fill_last_batch=train,  # want real accuracy on validiation
+        self.loader = DALIGenericIterator(
+            pipe,
+            output_map=["data", "val_data", "label"] if fixmatch else ["data", "label"],
+            reader_name="Reader",
+            auto_reset=True,
+            fill_last_batch=train,  # want real accuracy on validiation
         )
         self.cls_div = classes_divisor
+        self.fixmatch = fixmatch
 
     def __len__(self):
         return math.ceil(self.loader._size / self.loader.batch_size)
 
     def __iter__(self):
-        # fmt: off
-        return ((batch[0]["data"], batch[0]["label"].squeeze().long() // self.cls_div) for batch in self.loader)
-        # fmt: on
+        for b in self.loader:  # b = batch
+            target = b[0]["label"].squeeze().long() // self.cls_div
+            images = torch.cat([b[0]["data"], b[0]["val_data"]], dim=0) if self.fixmatch else b[0]["data"]
+            yield images, target

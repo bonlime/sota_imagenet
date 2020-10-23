@@ -234,6 +234,10 @@ class DaliDataManager:
             resize_method=FLAGS.resize_method,
             classes_divisor=FLAGS.classes_divisor,
             use_tfrecords=FLAGS.use_tfrecords,
+            crop_method=FLAGS.crop_method,
+            jitter=FLAGS.jitter,
+            random_interpolation=FLAGS.random_interpolation,
+            fixmatch=FLAGS.fixmatch,
         )
         if FLAGS.rect_validation:
             val_loader = ValRectLoader(bs=val_bs, workers=FLAGS.workers, sz=val_sz, resize_method=FLAGS.resize_method)
@@ -246,6 +250,7 @@ class DaliDataManager:
                 resize_method=FLAGS.resize_method,
                 classes_divisor=FLAGS.classes_divisor,
                 use_tfrecords=FLAGS.use_tfrecords,
+                crop_method=FLAGS.crop_method,
             )
         return trn_loader, val_loader
 
