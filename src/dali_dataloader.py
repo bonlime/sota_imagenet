@@ -13,6 +13,13 @@ from nvidia.dali.plugin.pytorch import DALIGenericIterator, DALIClassificationIt
 from pytorch_tools.utils.misc import env_rank, env_world_size
 
 ROOT_DATA_DIR = "data/"  # images should be mounted or linked to data/ folder inside this repo
+RESIZE_DICT = {
+    "nn": types.INTERP_NN,
+    "linear": types.INTERP_LINEAR,
+    "triang": types.INTERP_TRIANGULAR,
+    "cubic": types.INTERP_CUBIC,
+    "lancz": types.INTERP_LANCZOS3,
+}
 
 
 class ValRectExternalInputIterator:
@@ -81,13 +88,12 @@ class ValRectExternalInputIterator:
 class ValRectPipe(Pipeline):
     """Loader which returns images with AR almost the same as original, minimizing loss of information"""
 
-    def __init__(self, bs=25, workers=4, sz=224, resize_method="linear"):
+    def __init__(self, bs=25, workers=4, sz=224, resize_method="triang"):
         super().__init__(bs, workers, env_rank(), seed=42)
         external_iterator = ValRectExternalInputIterator(batch_size=bs, size=sz)
         self.source = ops.ExternalSource(source=external_iterator, num_outputs=3)
         self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
-        interp_type = types.INTERP_TRIANGULAR if resize_method == "linear" else types.INTERP_CUBIC
-        self.resize = ops.Resize(device="gpu", interp_type=interp_type)
+        self.resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method])
         self.normalize = ops.CropMirrorNormalize(
             device="gpu",
             mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
@@ -107,7 +113,7 @@ class ValRectPipe(Pipeline):
 class ValRectLoader:
     """Wrap dali to look like torch dataloader"""
 
-    def __init__(self, bs=32, workers=4, sz=224, resize_method="linear"):
+    def __init__(self, bs=32, workers=4, sz=224, resize_method="triang"):
         """Returns train or val iterator over Imagenet data"""
         pipe = ValRectPipe(bs=bs, workers=workers, sz=sz, resize_method=resize_method)
         pipe.build()
@@ -180,13 +186,6 @@ class DefaultPipe(Pipeline):
             num_attempts=100,
         )
         self.val_decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
-        RESIZE_DICT = {
-            "nn": types.INTERP_NN,
-            "linear": types.INTERP_LINEAR,
-            "triang": types.INTERP_TRIANGULAR,
-            "cubic": types.INTERP_CUBIC,
-            "lancz": types.INTERP_LANCZOS3,
-        }
         # train resize doesn't preserve aspect ratio on purpose
         # works much better with INTERP_TRIANGULAR
         self.train_resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method], resize_x=sz, resize_y=sz)
@@ -337,5 +336,6 @@ class DaliLoader:
     def __iter__(self):
         for b in self.loader:  # b = batch
             target = b[0]["label"].squeeze().long() // self.cls_div
+            target = torch.cat([target, target]) if self.fixmatch else target
             images = torch.cat([b[0]["data"], b[0]["val_data"]], dim=0) if self.fixmatch else b[0]["data"]
             yield images, target
