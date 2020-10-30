@@ -20,6 +20,11 @@ RUN pip --no-cache-dir install --upgrade \
     git+https://github.com/rwightman/pytorch-image-models@master \
     inplace-abn==1.1.0 
 
+# Install fixed version of DALI. TODO: remove when container 20.11 is released
+RUN pip install -U \
+  --extra-index-url https://developer.download.nvidia.com/compute/redist \
+  nvidia-dali-cuda100==0.27.0
+
 # adding this VAR to force update of pytorch-tools each time
 ARG RANDOM_VAR=none
 RUN RANDOM_VAR=${RANDOM_VAR}

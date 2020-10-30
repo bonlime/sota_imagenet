@@ -213,13 +213,13 @@ class DefaultPipe(Pipeline):
         self.jitter_op = ops.Jitter(device="gpu")
         self.coin = ops.CoinFlip()
         self.bool = ops.Cast(dtype=types.DALIDataType.BOOL)
-        self.blur_op = ops.GaussianBlur(device="gpu", window_size=15)  # 15 is just a random const
+        self.blur_op = ops.GaussianBlur(device="gpu", window_size=11)  # 15 is just a random const
         # jitter is a very strong aug want to have it rarely
         self.coin_jitter = ops.CoinFlip(probability=0.2)
         self.rng1 = ops.Uniform(range=[0, 1])  # for crop
         self.rng2 = ops.Uniform(range=[0.85, 1.15])  # for color augs
         self.rng3 = ops.Uniform(range=[-15, 15])  # for hue
-        self.blur_sigma_rng = ops.Uniform(range=[1.0, 3.0])  # default sigma for WS=15 is 2.6 want it also to be random
+        self.blur_sigma_rng = ops.Uniform(range=[0.8, 1.4])  # default sigma for WS=11 is 1.4 want it also to be random
         self.train = train
         self.use_tfrecords = use_tfrecords
         self.ctwist = ctwist
@@ -248,9 +248,9 @@ class DefaultPipe(Pipeline):
             images = self.train_decode(images)
             if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
                 images = self.jitter_op(images, mask=self.coin_jitter())
-            if self.use_blur:  # optional 50% blur
-                images = mix(self.bool(self.coin()), images, self.blur_op(images, sigma=self.blur_sigma_rng()))
             images = self._train_resize(images)
+            if self.use_blur:  # optional 50% blur. use it after resize so that it's more determinitstic
+                images = mix(self.bool(self.coin()), images, self.blur_op(images, sigma=self.blur_sigma_rng()))
             if self.ctwist:
                 images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
                 images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
@@ -283,6 +283,8 @@ class FixMatchPipe(DefaultPipe):
         if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
             images = self.jitter_op(images, mask=self.coin_jitter())
         images = self._train_resize(images)
+        if self.use_blur:  # optional 50% blur
+            images = mix(self.bool(self.coin()), images, self.blur_op(images, sigma=self.blur_sigma_rng()))
         if self.ctwist:
             images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
             images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
