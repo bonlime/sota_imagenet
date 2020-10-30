@@ -143,6 +143,7 @@ class DefaultPipe(Pipeline):
         sz=224,
         ctwist=True,
         jitter=False,
+        blur=False,
         min_area=0.08,
         resize_method="triang",
         crop_method="default",
@@ -212,15 +213,18 @@ class DefaultPipe(Pipeline):
         self.jitter_op = ops.Jitter(device="gpu")
         self.coin = ops.CoinFlip()
         self.bool = ops.Cast(dtype=types.DALIDataType.BOOL)
+        self.blur_op = ops.GaussianBlur(device="gpu", window_size=15)  # 15 is just a random const
         # jitter is a very strong aug want to have it rarely
         self.coin_jitter = ops.CoinFlip(probability=0.2)
         self.rng1 = ops.Uniform(range=[0, 1])  # for crop
         self.rng2 = ops.Uniform(range=[0.85, 1.15])  # for color augs
         self.rng3 = ops.Uniform(range=[-15, 15])  # for hue
+        self.blur_sigma_rng = ops.Uniform(range=[1.0, 3.0])  # default sigma for WS=15 is 2.6 want it also to be random
         self.train = train
         self.use_tfrecords = use_tfrecords
         self.ctwist = ctwist
         self.use_jitter = jitter
+        self.use_blur = blur
         self.random_interpolation = random_interpolation
 
     def _train_resize(self, images):
@@ -244,6 +248,8 @@ class DefaultPipe(Pipeline):
             images = self.train_decode(images)
             if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
                 images = self.jitter_op(images, mask=self.coin_jitter())
+            if self.use_blur:  # optional 50% blur
+                images = mix(self.bool(self.coin()), images, self.blur_op(images, sigma=self.blur_sigma_rng()))
             images = self._train_resize(images)
             if self.ctwist:
                 images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
@@ -301,6 +307,7 @@ class DaliLoader:
         use_tfrecords=False,
         crop_method="default",  # one of `default` or `full`
         jitter=False,  # use pixel jitter augmentation
+        blur=False,  # optional gaussian blur
         random_interpolation=False,
         fixmatch=False,  # doubles the size of BS by also returning non augmented copies of image
     ):
@@ -313,6 +320,7 @@ class DaliLoader:
             sz=sz,
             ctwist=ctwist,
             jitter=jitter,
+            blur=blur,
             min_area=min_area,
             resize_method=resize_method,
             crop_method=crop_method,

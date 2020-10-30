@@ -1,34 +1,34 @@
-# close to exp47 
-# + jitter
-# + random interpolation
-# + RectValidation
+# +FixMatch
+# Requires starting from sigmoid pretrained network 
 
-name : exp80.GENet_no_dim_red_hardaugs
+name : exp81.BNet_small_fixmatch
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
-    block_fns: ["Pre_XX", "Pre_XX", "Pre_IR", "Pre_IR"]
+    block_fns: ["Pre_XX", "Pre_XX", "Pre_Custom_2", "Pre_Custom_2"]
     stage_args: [
         {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
         {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
-        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
-        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+        {"bottle_ratio": 1, "dw_str2_kernel_size": 9, "filter_steps": 32},
+        {"bottle_ratio": 1, "dw_str2_kernel_size": 9, "filter_steps": 128},
     ]
     stem_width: 32
     head_width: 2560
     norm_act: leaky_relu
     stem_type: s2d
-    layers: [1, 2, 6, 5]
-    channels: [128, 192, 640, 1024]
+    layers: [2, 4, 8, 2]
+    channels: [64, 128, 256, 512]
     head_type: default
 
 
 weight_decay : 3e-5
-smooth: false
+smooth: true
+criterion: fixmatch
 criterion_params:
-    temperature: 0.1
+    hard_weight: 0.5
+fixmatch: true
+resume: logs/exp77.BNet_small_kld_HNM_nov_20201018_113425/model.chpn
 cutmix: 1.0
-jitter: false
 random_interpolation: false
 rect_validation: false
 resize_method: cubic

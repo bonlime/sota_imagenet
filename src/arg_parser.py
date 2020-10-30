@@ -68,6 +68,7 @@ def parse_args():
     add_arg("--use_tfrecords", action="store_true", help="Flag to read data from tfrecords instead of files")
     add_arg("--rect_validation", action="store_true", help="Flag to perform validation on rectangles")
     add_arg("--jitter", action="store_true", help="Flag to add jitter augmentation")
+    add_arg("--blur", action="store_true", help="Flag to add jitter augmentation")
     add_arg("--random_interpolation", action="store_true", help="Flag to use random interpolation for train")
     add_arg("--fixmatch", action="store_true", help="Flag to use fixmatch technique augmentation")
 

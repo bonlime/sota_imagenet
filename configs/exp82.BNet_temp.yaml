@@ -1,9 +1,8 @@
-# close to exp47 
-# + jitter
-# + random interpolation
-# + RectValidation
+# close to exp48
+# + temperature instead of smoothing
 
-name : exp80.GENet_no_dim_red_hardaugs
+
+name : exp82.BNet_temperature
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -22,16 +21,12 @@ model_params:
     channels: [128, 192, 640, 1024]
     head_type: default
 
-
-weight_decay : 3e-5
-smooth: false
 criterion_params:
     temperature: 0.1
+    
 cutmix: 1.0
-jitter: false
-random_interpolation: false
-rect_validation: false
-resize_method: cubic
+weight_decay : 3e-5
+# smooth: false # false for exp82
 ctwist: true
 # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
 ema_decay: 0.9993

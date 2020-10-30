@@ -240,6 +240,7 @@ class DaliDataManager:
             use_tfrecords=FLAGS.use_tfrecords,
             crop_method=FLAGS.crop_method,
             jitter=FLAGS.jitter,
+            blur=FLAGS.blur,
             random_interpolation=FLAGS.random_interpolation,
             fixmatch=FLAGS.fixmatch,
         )
