@@ -1,7 +1,7 @@
 # close to exp48
 # + normalize in CCE
 
-name : exp82.BNet_temperature
+name : exp86.BNet_norm
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
