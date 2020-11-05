@@ -105,6 +105,13 @@ def main():
         criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "kld":  # the most suitable loss for sigmoid output with cutmix
         criterion = pt.losses.BinaryKLDivLoss(**FLAGS.criterion_params).cuda()
+    elif FLAGS.criterion == "adacos":
+        criterion = pt.losses.AdaCos(
+            embedding_size=model.last_linear.weight.size(1),
+            num_classes=1000,
+            final_criterion=pt.losses.CrossEntropyLoss(),
+        ).cuda()
+        model.last_linear = nn.Identity()
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")
         criterion = FixMatchLoss(**FLAGS.criterion_params).cuda()
