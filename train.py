@@ -112,6 +112,7 @@ def main():
             final_criterion=pt.losses.CrossEntropyLoss(),
         ).cuda()
         model.last_linear = nn.Identity()
+        optim_params[1]["params"].extend(list(criterion.parameters()))
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")
         criterion = FixMatchLoss(**FLAGS.criterion_params).cuda()
