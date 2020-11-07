@@ -112,29 +112,23 @@ class AdditiveAngularMarginLoss(nn.Module):
         github.com/lyakaap/Landmark2019-1st-and-3rd-Place-Solution/master/src/modeling/metric_learning.py
     """
 
-    def __init__(self, embedding_size, num_classes, final_criterion=nn.CrossEntropyLoss(), s=10.0, m=0.3):
+    def __init__(self, final_criterion=nn.CrossEntropyLoss(), s=10.0, m=0.2):
         super().__init__()
         self.s = s
         self.m = m
-
-        self.register_parameter("weight", nn.Parameter(torch.zeros(num_classes, embedding_size)))
-        nn.init.xavier_uniform_(self.weight)
-
         self.cos_m = math.cos(m)
         self.sin_m = math.sin(m)
         self.th = math.cos(math.pi - m)
         self.mm = math.sin(math.pi - m) * m
-
         self.final_criterion = final_criterion
 
-    def forward(self, features, y_true):
+    def forward(self, cosine, y_true):
         """
         Args:
-            features: raw logits from the model
+            features: already sphere normalized logits
             y_true: Class labels, not one-hot encoded
         """
         # --------------------------- cos(theta) & phi(theta) ---------------------------
-        cosine = F.linear(F.normalize(features), F.normalize(self.weight))
         sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
         phi = cosine * self.cos_m - sine * self.sin_m
         phi = torch.where(cosine > self.th, phi.to(cosine), cosine - self.mm)
@@ -202,27 +196,79 @@ class LargeMarginCosineLoss(torch.nn.Module):
         return loss
 
 
-class ASoftMax(nn.Module):
+class SphereLinearLayer(nn.Module):
     """
-    Args:
-        embedding_size (int):
-        num_classes (int):
-        final_criterion (nn.Module):
-    Input:
-        features: raw logits from the model
-        y_true: Class labels, not one-hot encoded
+    Almost the same as default linear layer but performs normalization on unit hyper-sphere
     """
 
-    def __init__(self, embedding_size, num_classes, final_criterion=nn.CrossEntropyLoss()):
+    def __init__(self, embedding_size, num_classes):
         super().__init__()
         self.register_parameter("weight", nn.Parameter(torch.zeros(num_classes, embedding_size)))
         nn.init.xavier_uniform_(self.weight)
-        self.final_criterion = final_criterion
 
-    def forward(self, features, y_true):
-        logits = F.linear(F.normalize(features), F.normalize(self.weight))
-        loss = self.final_criterion(logits, y_true)
-        return loss
+    def forward(self, x):
+        x = F.linear(F.normalize(x), F.normalize(self.weight))
+        return x
+
+
+class AdaCos(nn.Module):
+    """PyTorch implementation of AdaCos. See Ref[1] for paper
+
+    This implementation is different from the most open-source implementations in following ways:
+    1) expects raw logits of size (bs x num_classes) not (bs, embedding_size)
+    2) despite AdaCos being dynamic, still add an optional margin parameter
+    3) calculate running average stats of B and θ, not batch-wise stats as in original paper
+    4) normalize input logits, not embeddings and weights
+
+    Args:
+        margin (float): margin in radians
+        momentum (float): momentum for running average of B and θ
+
+    Input:
+        y_pred (torch.Tensor): shape BS x N_classes
+        y_true (torch.Tensor): one-hot encoded. shape BS x N_classes
+    Reference:
+        [1] Adaptively Scaling Cosine Logits for Effectively Learning Deep Face Representations
+
+    """
+
+    def __init__(self, final_criterion, margin=0, momentum=0.95):
+        super(AdaCos, self).__init__()
+        self.final_criterion = final_criterion
+        self.margin = margin
+        self.momentum = momentum
+        self.prev_s = 10
+        self.running_B = 1000  # default value is chosen so that initial S is ~10
+        self.running_theta = math.pi / 4
+        self.eps = 1e-7
+        self.idx = 0
+
+    def forward(self, cosine, y_true):
+        cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
+        # cos_theta = torch.cos(torch.acos(cos_theta + self.margin))
+
+        if y_true.dim() != 1:
+            y_true_one_hot = y_true.float()
+        else:
+            y_true_one_hot = torch.zeros_like(cos_theta)
+            y_true_one_hot.scatter_(1, y_true.unsqueeze(1), 1.0)
+
+        with torch.no_grad():
+            B_batch = cos_theta[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(embedding.size(0))
+            self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
+            theta = torch.acos(cos_theta.clamp(-1 + self.eps, 1 - self.eps))
+            # originally authors use median, but I use mean
+            theta_batch = theta[y_true_one_hot.ne(0)].mean().clamp_max(math.pi / 4)
+            self.running_theta = self.running_theta * self.momentum + theta_batch * (1 - self.momentum)
+            self.prev_s = self.running_B.log() / torch.cos(self.running_theta)
+
+        self.idx += 1
+        if self.idx % 1000 == 0:
+            print(
+                f"\nRunning B: {self.running_B:.2f}. Running theta: {self.running_theta:.2f}. Running S: {self.prev_s:.2f}"
+            )
+
+        return self.final_criterion(cos_theta * self.prev_s, y_true_one_hot)
 
 
 LOSS_FROM_NAME = {
@@ -235,5 +281,4 @@ LOSS_FROM_NAME = {
     # "reduced_focal": pt.losses.FocalLoss(mode="multiclass", combine_thr=0.5, gamma=2.0),
     "cross_entropy": torch.nn.CrossEntropyLoss(),
     # "normalized_ce": NormalizedCELoss,
-    "A-softmax": ASoftMax,
 }

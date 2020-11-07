@@ -1,4 +1,5 @@
 # close to exp48
+# + no cutmix
 # + no last activation in head
 # + angular softmax loss
 # + smaller size of the head
@@ -28,7 +29,7 @@ criterion: a-softmax
 criterion_params:
     temperature: 0.1 # scale is inside CCE
     
-cutmix: 1.0
+# cutmix: 1.0 # no cutmix for adacos in exp87
 weight_decay : 3e-5
 smooth: true
 ctwist: true
@@ -39,6 +40,6 @@ ema_decay: 0.9993
 # lr should be BS/256 * 0.1
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 8], "lr": [0.1, 0.2], "mom": 0.9},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
     {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
 ]

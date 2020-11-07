@@ -34,8 +34,9 @@ from src.arg_parser import parse_args
 from src.dali_dataloader import DaliLoader, ValRectLoader
 from src.utils import HardNegativeWrapper
 from src.utils import FixMatchLoss
+from src.angular_losses import AdaCos
 from src.angular_losses import AdditiveAngularMarginLoss
-from src.angular_losses import ASoftMax
+from src.angular_losses import SphereLinearLayer
 
 FLAGS = parse_args()
 # makes it slightly faster
@@ -87,7 +88,6 @@ def main():
         model = pt.modules.weight_standartization.conv_to_ws_conv(model)
     logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
     model = model.cuda()
-    optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
 
     if FLAGS.sigmoid_trick:
         if hasattr(model, "last_linear"):  # speedup convergence
@@ -100,37 +100,27 @@ def main():
     if FLAGS.criterion == "cce":
         # dirty way to support older code. TODO: rewrite
         FLAGS.criterion_params["smoothing"] = 0.1 if FLAGS.smooth else 0.0
-        criterion = pt.losses.CrossEntropyLoss(**FLAGS.criterion_params).cuda()
+        criterion = pt.losses.CrossEntropyLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "sigmoid":
-        criterion = torch.nn.MultiLabelSoftMarginLoss(**FLAGS.criterion_params).cuda()
+        criterion = torch.nn.MultiLabelSoftMarginLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "focal":
         criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "kld":  # the most suitable loss for sigmoid output with cutmix
-        criterion = pt.losses.BinaryKLDivLoss(**FLAGS.criterion_params).cuda()
+        criterion = pt.losses.BinaryKLDivLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "adacos":
-        criterion = pt.losses.AdaCos(
-            embedding_size=model.last_linear.weight.size(1),
-            num_classes=1000,
-            final_criterion=pt.losses.CrossEntropyLoss(),
-        ).cuda()
-        model.last_linear = nn.Identity()
+        criterion = AdaCos(final_criterion=pt.losses.CrossEntropyLoss())
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.criterion == "arcface":
-        criterion = AdditiveAngularMarginLoss(
-            embedding_size=model.last_linear.weight.size(1),
-            num_classes=1000,
-            final_criterion=pt.losses.CrossEntropyLoss(),
-        ).cuda()
-        model.last_linear = nn.Identity()
+        criterion = AdditiveAngularMarginLoss(final_criterion=pt.losses.CrossEntropyLoss())
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.criterion == "a-softmax":
-        criterion = ASoftMax(
-            embedding_size=model.last_linear.weight.size(1),
-            num_classes=1000,
-            final_criterion=pt.losses.CrossEntropyLoss(**FLAGS.criterion_params),
-        ).cuda()
-        model.last_linear = nn.Identity()
+        criterion = pt.losses.CrossEntropyLoss(**FLAGS.criterion_params)
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")
-        criterion = FixMatchLoss(**FLAGS.criterion_params).cuda()
+        criterion = FixMatchLoss(**FLAGS.criterion_params)
+    criterion = criterion.cuda()
+    optim_params = pt.utils.misc.filter_bn_from_wd(model) if FLAGS.no_bn_wd else model.parameters()
     # if criterion has it's own params, also optimize them
     optim_params[1]["params"].extend(list(criterion.parameters()))
 

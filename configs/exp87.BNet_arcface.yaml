@@ -3,7 +3,7 @@
 # + no last activation in head
 # + adacos loss
 
-name : exp87.BNet_adacos
+name : exp87.BNet_arcface
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -15,7 +15,7 @@ model_params:
         {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
     ]
     stem_width: 32
-    head_width: 2560
+    head_width: 256
     norm_act: leaky_relu
     stem_type: s2d
     layers: [1, 2, 6, 5]
@@ -24,7 +24,7 @@ model_params:
     head_norm_act: none # only for exp87
 
 
-criterion: adacos
+criterion: arcface
     
 # cutmix: 1.0 # no cutmix for adacos in exp87
 weight_decay : 3e-5
