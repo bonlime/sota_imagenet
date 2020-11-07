@@ -34,6 +34,8 @@ from src.arg_parser import parse_args
 from src.dali_dataloader import DaliLoader, ValRectLoader
 from src.utils import HardNegativeWrapper
 from src.utils import FixMatchLoss
+from src.angular_losses import AdditiveAngularMarginLoss
+from src.angular_losses import ASoftMax
 
 FLAGS = parse_args()
 # makes it slightly faster
@@ -112,10 +114,25 @@ def main():
             final_criterion=pt.losses.CrossEntropyLoss(),
         ).cuda()
         model.last_linear = nn.Identity()
-        optim_params[1]["params"].extend(list(criterion.parameters()))
+    elif FLAGS.criterion == "arcface":
+        criterion = AdditiveAngularMarginLoss(
+            embedding_size=model.last_linear.weight.size(1),
+            num_classes=1000,
+            final_criterion=pt.losses.CrossEntropyLoss(),
+        ).cuda()
+        model.last_linear = nn.Identity()
+    elif FLAGS.criterion == "a-softmax":
+        criterion = ASoftMax(
+            embedding_size=model.last_linear.weight.size(1),
+            num_classes=1000,
+            final_criterion=pt.losses.CrossEntropyLoss(**FLAGS.criterion_params),
+        ).cuda()
+        model.last_linear = nn.Identity()
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")
         criterion = FixMatchLoss(**FLAGS.criterion_params).cuda()
+    # if criterion has it's own params, also optimize them
+    optim_params[1]["params"].extend(list(criterion.parameters()))
 
     if FLAGS.hard_pct > 0:  # maybe wrap with HNM
         criterion = HardNegativeWrapper(criterion, FLAGS.hard_pct)
