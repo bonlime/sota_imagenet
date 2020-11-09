@@ -116,6 +116,9 @@ def main():
     elif FLAGS.criterion == "a-softmax":
         criterion = pt.losses.CrossEntropyLoss(**FLAGS.criterion_params)
         model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
+    elif FLAGS.criterion == "a-focal":  # angular focal
+        criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")
         criterion = FixMatchLoss(**FLAGS.criterion_params)
