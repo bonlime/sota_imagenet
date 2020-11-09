@@ -37,6 +37,9 @@ from src.utils import FixMatchLoss
 from src.angular_losses import AdaCos
 from src.angular_losses import AdditiveAngularMarginLoss
 from src.angular_losses import SphereLinearLayer
+from src.angular_losses import SphereMAELoss
+from src.angular_losses import ArcCosSoftmax
+from src.angular_losses import ArcCosSoftmaxCenter
 
 FLAGS = parse_args()
 # makes it slightly faster
@@ -118,6 +121,15 @@ def main():
         model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.criterion == "a-focal":  # angular focal
         criterion = pt.losses.FocalLoss(**FLAGS.criterion_params)
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
+    elif FLAGS.criterion == "sphere-mae":
+        criterion = SphereMAELoss()
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
+    elif FLAGS.criterion == "arc-softmax":
+        criterion = ArcCosSoftmax(**FLAGS.criterion_params)
+        model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
+    elif FLAGS.criterion == "arc-softmax-center":
+        criterion = ArcCosSoftmaxCenter(**FLAGS.criterion_params)
         model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")

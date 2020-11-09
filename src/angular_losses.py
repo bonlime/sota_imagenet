@@ -271,6 +271,42 @@ class AdaCos(nn.Module):
         return self.final_criterion(cos_theta * self.prev_s, y_true_one_hot)
 
 
+class SphereMAELoss(nn.Module):
+    # NOTE: This loss doesn't work if used alone, because it collapses
+    # nees any additional loss to prevent it from collapse
+    def forward(self, cosine, y_true):
+        """
+        Args:
+            features: already sphere normalized logits
+            y_true: Class labels, not one-hot encoded
+        """
+        EPS = 1e-7
+        theta = torch.acos(cosine.clamp(-1 + EPS, 1 - EPS))
+        true_theta = theta.gather(dim=1, index=y_true.unsqueeze(-1))
+        return true_theta.mean()  # minimize mean distance to true target vector
+
+
+class ArcCosSoftmax(pt.losses.CrossEntropyLoss):
+    def forward(self, y_pred, y_true):
+        EPS = 1e-7
+        y_pred = -torch.acos(y_pred.clamp(-1 + EPS, 1 - EPS))
+        return super().forward(y_pred, y_true)
+
+
+class ArcCosSoftmaxCenter(pt.losses.CrossEntropyLoss):
+    # combination of ArcCos + Center loss
+    # ArcCos optimizes inter-class distance while Center Loss optimizes intra-class distance
+
+    def forward(self, y_pred, y_true):
+        EPS = 1e-7
+        theta = torch.acos(y_pred.clamp(-1 + EPS, 1 - EPS))
+        cce_loss = super().forward(-theta, y_true)
+        # if we're using cutmix only move to the largest target
+        true_index = y_true[..., None] if y_true.dim() == 1 else y_true.argmax(-1, keepdim=True)
+        center_loss = theta.gather(dim=1, index=true_index).mean()  # minimize mean distance to true target vector
+        return cce_loss + center_loss
+
+
 LOSS_FROM_NAME = {
     "arcface": AdditiveAngularMarginLoss,
     # "sphereface": None,
