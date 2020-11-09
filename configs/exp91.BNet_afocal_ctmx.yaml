@@ -27,8 +27,10 @@ model_params:
 
 criterion: a-focal
 criterion_params:
-    temperature: 0.1 # scale is inside CCE
-    
+    temperature: 0.2 # because focal uses sigmoid we need much smaller scale
+    alpha: 0.5
+    combine_thr: 0.5
+
 cutmix: 1.0
 weight_decay : 3e-5
 smooth: true
