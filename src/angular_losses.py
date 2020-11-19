@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_tools as pt
+from pytorch_tools.losses import Loss
 
 
 class AngularPenaltySMLoss(nn.Module):
@@ -271,9 +272,13 @@ class AdaCos(nn.Module):
         return self.final_criterion(cos_theta * self.prev_s, y_true_one_hot)
 
 
-class SphereMAELoss(nn.Module):
+class SphereMAELoss(Loss):
     # NOTE: This loss doesn't work if used alone, because it collapses
-    # nees any additional loss to prevent it from collapse
+    # needs any additional loss to prevent it from collapse
+    def __init__(self, threshold=0.2):
+        super().__init__()
+        self.threshold = threshold
+
     def forward(self, cosine, y_true):
         """
         Args:
@@ -283,7 +288,63 @@ class SphereMAELoss(nn.Module):
         EPS = 1e-7
         theta = torch.acos(cosine.clamp(-1 + EPS, 1 - EPS))
         true_theta = theta.gather(dim=1, index=y_true.unsqueeze(-1))
-        return true_theta.mean()  # minimize mean distance to true target vector
+        mask = true_theta.gt(self.threshold)
+        if ~mask.all():  # if all samples are less than threshold need to avoid division by zero
+            return true_theta.mul(0).sum()
+        else:
+            # minimize mean distance to true target vector for samples with angle less bigger than threshold
+            return true_theta[mask].mean()
+
+
+class SphereCosMAELoss(Loss):
+    # NOTE: This loss doesn't work if used alone, because it collapses
+    # needs any additional loss to prevent it from collapse
+    # different from SphereMAELoss because it optimizes cosine not the actual angle
+    # avoiding of arccos may help (or may not need to test)
+    # default value 0.98 = arccos(0.2). don't push further than 0.2 rad
+    def __init__(self, threshold=0.98):
+        super().__init__()
+        self.threshold = threshold
+
+    def forward(self, cosine, y_true):
+        """
+        Args:
+            cosine: already sphere normalized logits
+            y_true: Class labels, not one-hot encoded
+        """
+        true_cosine = cosine.gather(dim=1, index=y_true.unsqueeze(-1))
+        mask = true_cosine.lt(self.threshold)
+        if ~mask.all():  # if all samples are less than threshold need to avoid division by zero
+            return true_cosine.mul(0).sum()
+        else:
+            # minimize mean distance to true target vector with cosine lower than threshold
+            return true_cosine[mask].mean()
+
+
+class NegativeContrastive(Loss):
+    # This loss maximizes inter-class distance by ensuring that examples of negative class are wide spread
+
+    def forward(self, cosine, y_true):
+        """
+        Args:
+            cosine: already sphere normalized logits
+            y_true: Class labels, not one-hot encoded
+        """
+        return cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1).mean() + 1
+
+
+class MyLoss1(Loss):
+    def __init__(self, w_intra=1, w_inter=1, intra_threshold=None, cos_intra=False):
+        super().__init__()
+        if self.cos_intra:
+            assert intra_threshold > 0.5
+            self.loss = SphereCosMAELoss(intra_threshold) * w_intra + NegativeContrastive() * w_inter
+        else:
+            assert intra_threshold < 0.5
+            self.loss = SphereMAELoss(intra_threshold) * w_intra + NegativeContrastive() * w_inter
+
+    def forward(self, cosine, y_true):
+        return self.loss(cosine, y_true)
 
 
 class ArcCosSoftmax(pt.losses.CrossEntropyLoss):
@@ -296,6 +357,9 @@ class ArcCosSoftmax(pt.losses.CrossEntropyLoss):
 class ArcCosSoftmaxCenter(pt.losses.CrossEntropyLoss):
     # combination of ArcCos + Center loss
     # ArcCos optimizes inter-class distance while Center Loss optimizes intra-class distance
+    def __init__(self, *args, center_weight=1, **kwargs):
+        self.center_weight = center_weight
+        super().__init__(self, *args, **kwargs)
 
     def forward(self, y_pred, y_true):
         EPS = 1e-7
@@ -303,8 +367,9 @@ class ArcCosSoftmaxCenter(pt.losses.CrossEntropyLoss):
         cce_loss = super().forward(-theta, y_true)
         # if we're using cutmix only move to the largest target
         true_index = y_true[..., None] if y_true.dim() == 1 else y_true.argmax(-1, keepdim=True)
-        center_loss = theta.gather(dim=1, index=true_index).mean()  # minimize mean distance to true target vector
-        return cce_loss + center_loss
+        # minimize MSE distance to true target vector (in radians). MSE needed to push further points stronger
+        center_loss = theta.gather(dim=1, index=true_index).pow(2).mean()
+        return cce_loss + self.center_weight * center_loss
 
 
 LOSS_FROM_NAME = {

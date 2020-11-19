@@ -1,9 +1,7 @@
-# close to exp48
-# + no last activation in head
-# + smaller size of the head
-# + arc angular softmax loss (on degrees instead of cosine)
+# same as 94
+# + weight for center loss is 0.01 not 1
 
-name : exp92.BNet_arcsoft_64
+name : exp95.BNet_arcsoft_center_mse_01
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -15,7 +13,7 @@ model_params:
         {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
     ]
     stem_width: 32
-    head_width: 64 # need much smaller for angular losses 2560
+    head_width: 256 # need much smaller for angular losses 2560
     norm_act: leaky_relu
     stem_type: s2d
     layers: [1, 2, 6, 5]
@@ -24,9 +22,10 @@ model_params:
     head_norm_act: none # only for exp87
 
 
-criterion: arc-softmax
+criterion: arc-softmax-center
 criterion_params:
     temperature: 0.15 # scale is inside CCE
+    center_weight: 0.01
     
 cutmix: 1.0
 weight_decay : 3e-5
