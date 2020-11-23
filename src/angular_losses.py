@@ -1,5 +1,7 @@
 import math
 import functools
+import numpy as np
+from loguru import logger
 
 import torch
 import torch.nn as nn
@@ -255,7 +257,7 @@ class AdaCos(nn.Module):
             y_true_one_hot.scatter_(1, y_true.unsqueeze(1), 1.0)
 
         with torch.no_grad():
-            B_batch = cos_theta[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(embedding.size(0))
+            B_batch = cos_theta[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(x.size(0))
             self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
             theta = torch.acos(cos_theta.clamp(-1 + self.eps, 1 - self.eps))
             # originally authors use median, but I use mean
@@ -270,6 +272,86 @@ class AdaCos(nn.Module):
             )
 
         return self.final_criterion(cos_theta * self.prev_s, y_true_one_hot)
+
+
+class AdaCosMargin(nn.Module):
+    """PyTorch implementation of modification of AdaCos which also supports additive margin like in AM-Softmax
+    See Ref[1] for paper. And Ref[2] for paper from which I took the idea of using margin
+
+    This implementation is different from the most open-source implementations in following ways:
+    1) can work both on embeddings of size (bs, embedding_size) and on raw logits of size (bs x num_classes)
+        in the second case logits are expected to be already scaled to unit sphere
+    2) despite AdaCos being dynamic, still add an optional margin parameter
+    3) calculate running average stats of B and θ, not batch-wise stats as in original paper
+
+    Args:
+        embedding_size (Optional[int, None]): if not None should be embedding size
+        num_classes (Optional[int, None]): if not None should be number of output classes
+        margin (float): margin in radians
+        momentum (float): momentum for running average of B and θ. Recommended value is 0.3
+
+    Input:
+        y_pred (torch.Tensor): shape BS x N_classes of BS x Embedding_size
+        y_true (torch.Tensor): one-hot encoded. shape BS x N_classes
+    Reference:
+        [1] Adaptively Scaling Cosine Logits for Effectively Learning Deep Face Representations
+
+    """
+
+    def __init__(self, embedding_size=None, num_classes=None, margin=0.3, momentum=0.95):
+        super().__init__()
+        if embedding_size is None or num_classes is None:
+            self.weight = None
+        else:
+            self.register_parameter("weight", nn.Parameter(torch.zeros(num_classes, embedding_size)))
+        assert margin < (math.pi / 4), "need margin to be less than pi / 4 to avoid division by a very small value"
+        self.margin = torch.tensor(margin)
+        self.momentum = momentum
+        self.prev_s = 10
+        self.running_B = 1e5  # default value is chosen so that initial S is ~10
+        self.running_theta = margin + 0.3
+        self.eps = 1e-7
+        self.final_criterion = 10
+        self.idx = 0
+        self.final_criterion = pt.losses.CrossEntropyLoss()
+
+    def forward(self, features, y_true):
+        if self.weight is not None:
+            cosine = torch.nn.functional.linear(features, torch.nn.functional.normalize(self.weight))
+        else:
+            cosine = features
+        self.margin = self.margin.to(features)  # cast dtype and device
+        # cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
+        # cos_theta = torch.cos(torch.acos(cos_theta + self.margin))
+        if y_true.dim() == 1:
+            y_true_one_hot = torch.zeros_like(cosine)
+            y_true_one_hot.scatter_(1, y_true.unsqueeze(1), 1.0)
+        else:
+            y_true_one_hot = y_true.float()
+            y_true = y_true_one_hot.argmax(-1).long()
+
+        with torch.no_grad():
+            B_batch = cosine[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(y_true.size(0))
+            # self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
+            # it's important to use median. mean wouldn't work!
+            theta_batch = cosine.gather(dim=1, index=y_true[..., None]).median().clamp_min(self.margin + 0.3)
+            # with cutmix lines below account for additional (small) class when calculating median. it's undesired
+            # theta_batch = cosine[y_true_one_hot.ne(0)].median().clamp_min(self.margin + 0.3)
+            # self.running_theta = self.running_theta * self.momentum + theta_batch * (1 - self.momentum)
+            # using batch instead of running should help
+            self.prev_s = B_batch.log() / (theta_batch - self.margin)
+
+            # self.prev_s = self.running_B.log() / (self.running_theta - self.margin)
+            self.prev_s = self.prev_s.clamp_max(25)
+
+        cosine = cosine.scatter_add(dim=1, index=y_true[..., None], src=self.margin.expand(y_true.size(0), 1))
+
+        self.idx += 1
+        if self.idx % 100 == 0:
+            print(
+                f"\nRunning B: {self.running_B:.2f} Running theta: {self.running_theta:.2f} Running S: {self.prev_s:.2f} Batch theta: {theta_batch:.2f}"
+            )
+        return self.final_criterion(cosine * self.prev_s, y_true_one_hot)
 
 
 class SphereMAELoss(Loss):
@@ -289,7 +371,7 @@ class SphereMAELoss(Loss):
         theta = torch.acos(cosine.clamp(-1 + EPS, 1 - EPS))
         true_theta = theta.gather(dim=1, index=y_true.unsqueeze(-1))
         mask = true_theta.gt(self.threshold)
-        if ~mask.all():  # if all samples are less than threshold need to avoid division by zero
+        if (~mask).all():  # if all samples are less than threshold need to avoid division by zero
             return true_theta.mul(0).sum()
         else:
             # minimize mean distance to true target vector for samples with angle less bigger than threshold
@@ -314,36 +396,81 @@ class SphereCosMAELoss(Loss):
         """
         true_cosine = cosine.gather(dim=1, index=y_true.unsqueeze(-1))
         mask = true_cosine.lt(self.threshold)
-        if ~mask.all():  # if all samples are less than threshold need to avoid division by zero
+        if (~mask).all():  # if all samples are greater than threshold need to avoid division by zero
             return true_cosine.mul(0).sum()
         else:
-            # minimize mean distance to true target vector with cosine lower than threshold
-            return true_cosine[mask].mean()
+            # minimize cosine to true target vector (for samples with cosine lower than threshold)
+            return 1 - true_cosine[mask].mean()
 
 
 class NegativeContrastive(Loss):
     # This loss maximizes inter-class distance by ensuring that examples of negative class are wide spread
-
     def forward(self, cosine, y_true):
         """
         Args:
             cosine: already sphere normalized logits
             y_true: Class labels, not one-hot encoded
         """
-        return cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1).mean() + 1
+        eta = 0.999  # idea from LinCos-Softmax paper
+        s = np.log(eta / (1 - eta) * cosine.size(1))
+        cosine_negative = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
+        loss = cosine_negative.mul(s).exp().sum(-1).add(1).log()
+        # print(loss.shape)
+        return loss.mean()
+
+
+class DSoftmax_intra(Loss):
+    # This loss maximizes inter-class distance by ensuring that examples of negative class are wide spread
+    def forward(self, cosine, y_true):
+        """
+        Args:
+            cosine: already sphere normalized logits
+            y_true: Class labels, not one-hot encoded
+        """
+        true_cosine = cosine.gather(dim=1, index=y_true.unsqueeze(-1))
+        with torch.no_grad():
+            s = 16  # need large enough
+            d_max = 0.9
+            min_loss = np.log(1 + np.e ** ((d_max - 1) * s))
+            # lower bound makes sure loss properly converges at the beginning
+            # upper bound makes sure loss properly converges at the end to 0 loss. Otherwise loss is always ~0.7
+            cos_median = true_cosine.detach().median().clamp(0.5, d_max)
+        loss = (cos_median - true_cosine).mul(s).exp().add(1).log() - min_loss
+        if not hasattr(self, "idx"):
+            self.idx = 0
+        else:
+            self.idx += 1
+        if self.idx % 1000 == 0:
+            logger.info(f"Intra Loss: {loss.mean().item():.2f}")
+        # cosine_negative = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
+        # loss = cosine_negative.mul(s).exp().sum().add(1).log()
+        return loss.mean()
 
 
 class MyLoss1(Loss):
     def __init__(self, w_intra=1, w_inter=1, intra_threshold=None, cos_intra=False):
         super().__init__()
-        if self.cos_intra:
+        if cos_intra is None:
+            # loss from D-Softmax
+            self.loss = DSoftmax_intra() * w_intra + NegativeContrastive() * w_inter
+        elif cos_intra:
+            intra_threshold = 1 if intra_threshold is None else intra_threshold
             assert intra_threshold > 0.5
             self.loss = SphereCosMAELoss(intra_threshold) * w_intra + NegativeContrastive() * w_inter
         else:
+            intra_threshold = 0 if intra_threshold is None else intra_threshold
             assert intra_threshold < 0.5
             self.loss = SphereMAELoss(intra_threshold) * w_intra + NegativeContrastive() * w_inter
+        print(self.loss)
+        self.idx = 0
 
     def forward(self, cosine, y_true):
+        if self.idx % 1000 == 0:
+            theta_batch = cosine.gather(dim=1, index=y_true[..., None]).median()
+            neg_cosine = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
+            B_batch = neg_cosine.mul(13).exp().sum().div(y_true.size(0))
+            logger.info(f"\nBatch B: {B_batch:.2f} Batch theta: {theta_batch:.2f}")
+        self.idx += 1
         return self.loss(cosine, y_true)
 
 
@@ -352,6 +479,28 @@ class ArcCosSoftmax(pt.losses.CrossEntropyLoss):
         EPS = 1e-7
         y_pred = -torch.acos(y_pred.clamp(-1 + EPS, 1 - EPS))
         return super().forward(y_pred, y_true)
+
+
+# class AMSoftmax(pt.losses.CrossEntropyLoss):
+#     def __init__(self, *args, margin=0, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.margin = margin
+
+#     def forward(self, y_pred, y_true):
+#         cosine = torch.nn.functional.linear(features, torch.nn.functional.normalize(self.weight))
+#         phi = cosine - self.m
+#         # --------------------------- convert label to one-hot ---------------------------
+#         one_hot = torch.zeros(cosine.size()).to(features)
+#         one_hot.scatter_(1, y_true.view(-1, 1).long(), 1)
+#         # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
+#         output = (one_hot * phi) + (
+#             (1.0 - one_hot) * cosine
+#         )  # you can use torch.where if your torch.__version__ is 0.4
+#         output *= self.s
+
+#         EPS = 1e-7
+#         y_pred = -torch.acos(y_pred.clamp(-1 + EPS, 1 - EPS))
+#         return super().forward(y_pred, y_true)
 
 
 class ArcCosSoftmaxCenter(pt.losses.CrossEntropyLoss):
