@@ -469,7 +469,7 @@ class MyLoss1(Loss):
             theta_batch = cosine.gather(dim=1, index=y_true[..., None]).median()
             neg_cosine = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
             B_batch = neg_cosine.mul(13).exp().sum().div(y_true.size(0))
-            logger.info(f"\nBatch B: {B_batch:.2f} Batch theta: {theta_batch:.2f}")
+            logger.info(f"Batch B: {B_batch:.2f} Batch theta: {theta_batch:.2f}")
         self.idx += 1
         return self.loss(cosine, y_true)
 
