@@ -113,7 +113,7 @@ def main():
     elif FLAGS.criterion == "kld":  # the most suitable loss for sigmoid output with cutmix
         criterion = pt.losses.BinaryKLDivLoss(**FLAGS.criterion_params)
     elif FLAGS.criterion == "adacos":
-        criterion = AdaCos(final_criterion=pt.losses.CrossEntropyLoss())
+        criterion = AdaCos(final_criterion=pt.losses.CrossEntropyLoss(), **FLAGS.criterion_params)
         model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
     elif FLAGS.criterion == "adacos-margin":
         criterion = AdaCosMargin(**FLAGS.criterion_params)

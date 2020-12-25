@@ -242,36 +242,42 @@ class AdaCos(nn.Module):
         self.momentum = momentum
         self.prev_s = 10
         self.running_B = 1000  # default value is chosen so that initial S is ~10
-        self.running_theta = math.pi / 4
+        self.running_cos = 0.7 # 0.7 is ~= cos(pi / 4)
         self.eps = 1e-7
         self.idx = 0
 
     def forward(self, cosine, y_true):
-        cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
+        # cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
         # cos_theta = torch.cos(torch.acos(cos_theta + self.margin))
 
-        if y_true.dim() != 1:
-            y_true_one_hot = y_true.float()
-        else:
-            y_true_one_hot = torch.zeros_like(cos_theta)
+        if y_true.dim() == 1: # if y_true is indexes
+            y_true_one_hot = torch.zeros_like(cosine)
             y_true_one_hot.scatter_(1, y_true.unsqueeze(1), 1.0)
+            y_true = y_true.long()
+        else:
+            y_true_one_hot = y_true.float().clone()
+            y_true = y_true_one_hot.argmax(-1).long()
 
+        
         with torch.no_grad():
-            B_batch = cos_theta[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(x.size(0))
+            B_batch = cosine[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(cosine.size(0))
             self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
-            theta = torch.acos(cos_theta.clamp(-1 + self.eps, 1 - self.eps))
-            # originally authors use median, but I use mean
-            theta_batch = theta[y_true_one_hot.ne(0)].mean().clamp_max(math.pi / 4)
-            self.running_theta = self.running_theta * self.momentum + theta_batch * (1 - self.momentum)
-            self.prev_s = self.running_B.log() / torch.cos(self.running_theta)
 
+            # median makes more sense than mean
+            # median on cosine is the same as median on angle but on cosine is faster
+            # in case of cutmix take larger image class. 0.7 is ~= cos (pi / 4). needed for better convergence at the begining
+            med_cos = cosine.gather(dim=1, index=y_true[..., None]).median().clamp_min(0.7)
+            self.running_cos = self.running_cos * self.momentum + med_cos * (1 - self.momentum)
+            self.prev_s = self.running_B.log() / (self.running_cos - self.margin)
+
+        cosine = cosine.scatter_add(dim=1, index=y_true[..., None], src=torch.ones_like(cosine).neg() * self.margin)
         self.idx += 1
         if self.idx % 1000 == 0:
-            print(
-                f"\nRunning B: {self.running_B:.2f}. Running theta: {self.running_theta:.2f}. Running S: {self.prev_s:.2f}"
+            logger.info(
+                f"\nRunning B: {self.running_B:.2f}. Running theta: {self.running_cos:.2f}. Running S: {self.prev_s:.2f}"
             )
 
-        return self.final_criterion(cos_theta * self.prev_s, y_true_one_hot)
+        return self.final_criterion(cosine * self.prev_s, y_true_one_hot)
 
 
 class AdaCosMargin(nn.Module):
@@ -403,7 +409,11 @@ class SphereCosMAELoss(Loss):
             return 1 - true_cosine[mask].mean()
 
 
-class NegativeContrastive(Loss):
+class NegativeContrastive(nn.Module):
+    def __init__(self, eta=0.999):
+        super().__init__()
+        self.eta = eta
+
     # This loss maximizes inter-class distance by ensuring that examples of negative class are wide spread
     def forward(self, cosine, y_true):
         """
@@ -411,15 +421,19 @@ class NegativeContrastive(Loss):
             cosine: already sphere normalized logits
             y_true: Class labels, not one-hot encoded
         """
-        eta = 0.999  # idea from LinCos-Softmax paper
-        s = np.log(eta / (1 - eta) * cosine.size(1))
+        # estimate max `s` as in LinCos-Softmax paper
+        # in reality if batch_B drops lower than `num_classes` during training it's a good idea to decrease eta slightly
+        s = np.log(self.eta / (1 - self.eta) * cosine.size(1))
         cosine_negative = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
-        loss = cosine_negative.mul(s).exp().sum(-1).add(1).log()
-        # print(loss.shape)
-        return loss.mean()
+        loss = cosine_negative.mul(s).exp().sum(-1).add(1).log().mean()
+        return loss
 
 
-class DSoftmax_intra(Loss):
+class DSoftmax_intra(nn.Module):
+    def __init__(self, threshold=0.90):
+        super().__init__()
+        self.threshold = threshold
+
     # This loss maximizes inter-class distance by ensuring that examples of negative class are wide spread
     def forward(self, cosine, y_true):
         """
@@ -431,47 +445,73 @@ class DSoftmax_intra(Loss):
         with torch.no_grad():
             s = 16  # need large enough
             d_max = 0.9
-            min_loss = np.log(1 + np.e ** ((d_max - 1) * s))
             # lower bound makes sure loss properly converges at the beginning
             # upper bound makes sure loss properly converges at the end to 0 loss. Otherwise loss is always ~0.7
-            cos_median = true_cosine.detach().median().clamp(0.5, d_max)
-        loss = (cos_median - true_cosine).mul(s).exp().add(1).log() - min_loss
-        if not hasattr(self, "idx"):
-            self.idx = 0
-        else:
-            self.idx += 1
-        if self.idx % 1000 == 0:
-            logger.info(f"Intra Loss: {loss.mean().item():.2f}")
+            # cos_median = true_cosine.detach().median().clamp(0.5, d_max)
+            # min_loss = np.log(1 + np.e ** ((self.threshold - 1) * s))
+            cos_median = self.threshold
+        loss = (cos_median - true_cosine).mul(s).exp().add(1).log().mean()  # - min_loss
         # cosine_negative = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
         # loss = cosine_negative.mul(s).exp().sum().add(1).log()
-        return loss.mean()
+        return loss
 
 
 class MyLoss1(Loss):
-    def __init__(self, w_intra=1, w_inter=1, intra_threshold=None, cos_intra=False):
+    def __init__(self, w_intra=1, w_inter=1, intra_threshold=0.9, eta=0.999):
         super().__init__()
-        if cos_intra is None:
-            # loss from D-Softmax
-            self.loss = DSoftmax_intra() * w_intra + NegativeContrastive() * w_inter
-        elif cos_intra:
-            intra_threshold = 1 if intra_threshold is None else intra_threshold
-            assert intra_threshold > 0.5
-            self.loss = SphereCosMAELoss(intra_threshold) * w_intra + NegativeContrastive() * w_inter
-        else:
-            intra_threshold = 0 if intra_threshold is None else intra_threshold
-            assert intra_threshold < 0.5
-            self.loss = SphereMAELoss(intra_threshold) * w_intra + NegativeContrastive() * w_inter
-        print(self.loss)
+        # self.loss_intra = DSoftmax_intra(intra_threshold)
+        # self.loss_inter = NegativeContrastive()
+        self.w_intra = w_intra
+        self.w_inter = w_inter
+        self.eta = eta
+        self.intra_threshold = intra_threshold
         self.idx = 0
+        self.mom = 0.99  # for debug printing only
+        self.running_B = 0
+        self.running_theta = 0
+        self.running_neg_theta = 0
 
     def forward(self, cosine, y_true):
+        if y_true.dim() == 1:
+            y_true_one_hot = torch.zeros_like(cosine)
+            y_true_one_hot.scatter_(1, y_true.unsqueeze(1), 1.0)
+        else:
+            y_true_one_hot = y_true.float()
+            y_true = y_true_one_hot.argmax(-1).long()
+
+        # inter class component aka Negative Contrastive
+        s = np.log(self.eta / (1 - self.eta) * cosine.size(1))
+        cosine_negative = cosine.where(
+            y_true_one_hot.eq(0), torch.ones_like(cosine).neg()
+        )  # fill positive class with -1
+        l_inter = cosine_negative.mul(s).exp().sum(-1).add(1).log().mean()
+        # TODO: remove top1 negative from loss computation. idea is that some classes are literali the same and this loss
+        # penalizes even correct predictions strongly
+        # cosine_negative = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
+        # l_inter = cosine_negative.mul(s).exp().sum(-1).add(1).log().mean()
+
+        # inter class component aka D-Softmax intra
+        # in case of softmax want only largest class to be close to 1, so use y_true
+        true_cosine = cosine.gather(dim=1, index=y_true.unsqueeze(-1))
+        s = 16  # need large enough
+        l_intra = (self.intra_threshold - true_cosine).mul(s).exp().add(1).log().mean()
+
+        # for debug
+        with torch.no_grad():
+            self.running_theta = self.running_theta * self.mom + true_cosine.median() * (1 - self.mom)
+            B_batch = cosine_negative.mul(s).exp().sum(-1).mean()
+            self.running_B = self.running_B * self.mom + B_batch * (1 - self.mom)
+            self.running_neg_theta = self.running_neg_theta * self.mom + cosine_negative.median() * (1 - self.mom)
+
         if self.idx % 1000 == 0:
-            theta_batch = cosine.gather(dim=1, index=y_true[..., None]).median()
-            neg_cosine = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
-            B_batch = neg_cosine.mul(13).exp().sum().div(y_true.size(0))
-            logger.info(f"Batch B: {B_batch:.2f} Batch theta: {theta_batch:.2f}")
+            # theta_batch = cosine.gather(dim=1, index=y_true[..., None]).median()
+            # neg_cosine = cosine.scatter(dim=1, index=y_true.long().unsqueeze(-1), value=-1)
+            # B_batch = neg_cosine.mul(13).exp().sum().div(y_true.size(0))
+            logger.info(
+                f"Batch B: {self.running_B:.2f} Pos theta median: {self.running_theta:.2f} Neg theta median: {self.running_neg_theta:.2f} L_intra: {l_intra:.2f} L_inter: {l_inter:.2f}"
+            )
         self.idx += 1
-        return self.loss(cosine, y_true)
+        return l_intra * self.w_intra + l_inter * self.w_inter
 
 
 class ArcCosSoftmax(pt.losses.CrossEntropyLoss):
