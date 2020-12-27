@@ -1,0 +1,25 @@
+# default ResNet50 with almost all possible augmentations and regularizations + trained for very long time
+# the idea is to check the best obtainable quality 
+# config is tuned for 2 GPUs
+
+name : exp97.R50_hard_reg_base
+arch : resnet50
+model_params : 
+  drop_rate: 0.2
+  drop_connect_rate: 0.2
+
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: True
+ctwist : True
+blur: true
+crop_method: full
+ema_decay: 0.9997 # using EMA instead of Lookahead
+
+phases : [
+  {"ep": 0, "sz": 224, "bs": 256},
+  {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+  {"ep": [8, 100], "lr": [0.2, 0], "mode": "cos"},
+  {"ep": [100, 150], "lr": [0.02, 0], "mode": "cos"},
+  {"ep": [150, 200], "lr": [0.02, 0], "mode": "cos"},
+]

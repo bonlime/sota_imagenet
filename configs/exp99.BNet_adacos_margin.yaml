@@ -1,9 +1,13 @@
+#### THIS IS A DRAFT OF CONFIG
+# exp90 was successful but used fixed A-Softmax
+# need to try 1. Cos Face (additive margin) 2. Cos Face + dynamic scale 
+
 # close to exp48 and exp90
 # + no last activation in head
 # + smaller size of the head
 # + angular margin (CosFace) loss with adaprive scale (AdaCos)
 
-name : exp105.BNet_adacos_margin
+name : exp99.BNet_adacos_margin_res
 arch : BNet
 model_params:
     stage_fns: ["simpl", "simpl", "simpl", "simpl"]
@@ -20,11 +24,12 @@ model_params:
     stem_type: s2d
     layers: [1, 2, 6, 5]
     channels: [128, 192, 640, 1024]
-    # in exp.105 realized that we may need a better head! need to investigate this moment
-    head_type: default ## in exp
+    # in exp.99 realized that we may need a better head! need to investigate this moment
+    head_type: default
     head_norm_act: none # only for exp87
 
-# resume: logs/exp90.BNet_asoft_ctmx_128_20201110_082241/model.chpn
+resume: logs/exp96.BNet_d-softmax_128_20201123_133305/model.chpn
+# resume: logs/exp99.BNet_adacos_margin_20201225_092149/model.chpn
 criterion: adacos
 criterion_params:
     margin: 0.2
@@ -40,6 +45,6 @@ ema_decay: 0.9993
 # lr should be BS/256 * 0.1
 phases : [
     {"ep": 0, "sz": 224, "bs": 256},
-    {"ep": [0, 8], "lr": [0.02, 0.2], "mom": 0.9},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
     {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
 ]

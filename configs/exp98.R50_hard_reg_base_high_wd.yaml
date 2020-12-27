@@ -1,0 +1,27 @@
+# same as 97 but wd increased to 0.002
+
+name : exp98.R50_hard_reg_base_high_wd
+arch : resnet50
+model_params : 
+  drop_rate: 0.2
+  drop_connect_rate: 0.2
+
+cutmix : 1.0
+smooth: True
+ctwist : True
+blur: true
+crop_method: full
+ema_decay: 0.9997 # using EMA instead of Lookahead
+
+weight_decay : 0.002 # 40x times higher than in exp97
+optim: fused_sgd
+optim_params: # want SGDW behaviour
+  wd_after_momentum: True
+
+phases : [
+  {"ep": 0, "sz": 224, "bs": 256},
+  {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+  {"ep": [8, 100], "lr": [0.2, 0], "mode": "cos"},
+  {"ep": [100, 150], "lr": [0.02, 0], "mode": "cos"},
+  {"ep": [150, 200], "lr": [0.02, 0], "mode": "cos"},ц
+]
