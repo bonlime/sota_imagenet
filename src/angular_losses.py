@@ -235,16 +235,17 @@ class AdaCos(nn.Module):
 
     """
 
-    def __init__(self, final_criterion, margin=0, momentum=0.95):
+    def __init__(self, final_criterion, margin=0, max_s=20, momentum=0.95):
         super(AdaCos, self).__init__()
         self.final_criterion = final_criterion
         self.margin = margin
         self.momentum = momentum
-        self.prev_s = 10
+        self.prev_s = max_s
         self.running_B = 1000  # default value is chosen so that initial S is ~10
         self.running_cos = 0.7 # 0.7 is ~= cos(pi / 4)
         self.eps = 1e-7
         self.idx = 0
+        self.max_s = max_s
 
     def forward(self, cosine, y_true):
         # cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
@@ -261,14 +262,16 @@ class AdaCos(nn.Module):
         
         with torch.no_grad():
             B_batch = cosine[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(cosine.size(0))
-            self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
-
             # median makes more sense than mean
             # median on cosine is the same as median on angle but on cosine is faster
             # in case of cutmix take larger image class. 0.7 is ~= cos (pi / 4). needed for better convergence at the begining
-            med_cos = cosine.gather(dim=1, index=y_true[..., None]).median().clamp_min(0.7)
+            med_cos = cosine.gather(dim=1, index=y_true[..., None]).median() 
+
+            self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
             self.running_cos = self.running_cos * self.momentum + med_cos * (1 - self.momentum)
-            self.prev_s = self.running_B.log() / (self.running_cos - self.margin)
+            # self.prev_s = B_batch.log() / (med_cos - self.margin)
+            self.prev_s = self.running_B.log() / (self.running_cos.clamp_min(0.7) - self.margin)
+            self.prev_s = min(self.prev_s, self.max_s) # limit maximum possible s. without this hack it blows up in first epochs 
 
         cosine = cosine.scatter_add(dim=1, index=y_true[..., None], src=torch.ones_like(cosine).neg() * self.margin)
         self.idx += 1
