@@ -37,6 +37,7 @@ from src.utils import FixMatchLoss
 from src.angular_losses import AdaCos
 from src.angular_losses import AdditiveAngularMarginLoss
 from src.angular_losses import SphereLinearLayer
+from src.angular_losses import SphereMLPLayer
 from src.angular_losses import SphereMAELoss
 from src.angular_losses import ArcCosSoftmax
 from src.angular_losses import ArcCosSoftmaxCenter
@@ -91,7 +92,6 @@ def main():
         model = models.__dict__[FLAGS.arch](**FLAGS.model_params)
     if FLAGS.weight_standardization:
         model = pt.modules.weight_standartization.conv_to_ws_conv(model)
-    logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
     model = model.cuda()
 
     if FLAGS.sigmoid_trick:
@@ -139,6 +139,15 @@ def main():
     elif FLAGS.criterion == "my_loss_1":
         criterion = MyLoss1(**FLAGS.criterion_params)
         model.last_linear = SphereLinearLayer(embedding_size=model.last_linear.weight.size(1), num_classes=1000).cuda()
+    elif FLAGS.criterion == "mlp_adacos":
+        criterion = AdaCos(final_criterion=pt.losses.CrossEntropyLoss(), **FLAGS.criterion_params)
+        model.last_linear = SphereMLPLayer(
+            embedding_size=model.last_linear.weight.size(1),
+            num_classes=1000,
+            hidden_size=4096,
+            act="hswish",
+            val_projector=True,
+        ).cuda()
     elif FLAGS.fixmatch:
         logger.info(f"Using special fixmatch criterion")
         criterion = FixMatchLoss(**FLAGS.criterion_params)
@@ -153,7 +162,9 @@ def main():
     optimizer = optimizer_from_name(FLAGS.optim)(
         optim_params, lr=0, weight_decay=FLAGS.weight_decay, **FLAGS.optim_params
     )
-
+    # need to log number of parameters after creating criterion because it may change in the process
+    # for example because of MLP layer
+    logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
     if FLAGS.resume:
         checkpoint = torch.load(FLAGS.resume, map_location=lambda storage, loc: storage.cuda(FLAGS.local_rank),)
         model.load_state_dict(checkpoint["state_dict"], strict=False)

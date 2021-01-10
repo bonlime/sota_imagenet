@@ -213,6 +213,36 @@ class SphereLinearLayer(nn.Module):
         x = F.linear(F.normalize(x), F.normalize(self.weight))
         return x
 
+class SphereMLPLayer(nn.Module):
+    """
+    Layer wich in train mode uses FC - BN - Act - FC and in val mode only last FC
+    The idea is that it should work like projector in SimCLR papers and boost models performance without
+    increaseing number of parameters. The output of last layer is additionally normalized
+    """
+
+    def __init__(self, embedding_size, num_classes, hidden_size=4096, act="relu", val_projector=False):
+        super().__init__()
+        self.register_parameter("weight", nn.Parameter(torch.zeros(num_classes, embedding_size)))
+        nn.init.xavier_uniform_(self.weight)
+        if act == "relu":
+            act_layer = nn.ReLU(inplace=True)
+        elif act == "hswish":
+            act_layer = nn.Hardswish()
+
+        self.projector = nn.Sequential(
+            nn.Linear(embedding_size, hidden_size, bias=False),
+            nn.BatchNorm1d(hidden_size),
+            act_layer,
+            nn.Linear(hidden_size, embedding_size)
+        ) 
+        self.val_projector = val_projector
+
+    def forward(self, x):
+        if self.training or self.val_projector:
+            x = self.projector(x)
+        x = F.linear(F.normalize(x), F.normalize(self.weight))
+        return x
+
 
 class AdaCos(nn.Module):
     """PyTorch implementation of AdaCos. See Ref[1] for paper
@@ -225,7 +255,9 @@ class AdaCos(nn.Module):
 
     Args:
         margin (float): margin in radians
+        max_s (float): maximum s. if not given may grow too large and five overflow
         momentum (float): momentum for running average of B and θ
+        arc_logits (bool): if true - add margin to arccosinus and pass negative arc to softmax 
 
     Input:
         y_pred (torch.Tensor): shape BS x N_classes
@@ -235,7 +267,7 @@ class AdaCos(nn.Module):
 
     """
 
-    def __init__(self, final_criterion, margin=0, max_s=20, momentum=0.95):
+    def __init__(self, final_criterion, margin=0, max_s=20, fixed_s=None, momentum=0.95, arc_logits=False, arc_margin=False):
         super(AdaCos, self).__init__()
         self.final_criterion = final_criterion
         self.margin = margin
@@ -246,6 +278,10 @@ class AdaCos(nn.Module):
         self.eps = 1e-7
         self.idx = 0
         self.max_s = max_s
+        self.fixed_s = fixed_s # this is stupid but AdaCos could be turned in non adapive loss....
+        self.arc_logits = arc_logits # what kind of logits to return
+        self.arc_margin = arc_margin # what kind of margin to use
+        assert (not arc_logits) or arc_margin, "arc_logits=True and arc_margin=False are not supported!"
 
     def forward(self, cosine, y_true):
         # cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
@@ -273,14 +309,25 @@ class AdaCos(nn.Module):
             self.prev_s = self.running_B.log() / (self.running_cos.clamp_min(0.7) - self.margin)
             self.prev_s = min(self.prev_s, self.max_s) # limit maximum possible s. without this hack it blows up in first epochs 
 
-        cosine = cosine.scatter_add(dim=1, index=y_true[..., None], src=torch.ones_like(cosine).neg() * self.margin)
         self.idx += 1
         if self.idx % 1000 == 0:
             logger.info(
                 f"\nRunning B: {self.running_B:.2f}. Running theta: {self.running_cos:.2f}. Running S: {self.prev_s:.2f}"
             )
 
-        return self.final_criterion(cosine * self.prev_s, y_true_one_hot)
+        ## Add margin
+        # old way
+        # cosine = cosine.scatter_add(dim=1, index=y_true[..., None], src=torch.ones_like(cosine).neg() * self.margin)
+
+        # new way
+        if self.arc_logits:
+            cosine = cosine.clamp(-1 + self.eps, 1 - self.eps) # avoid instability
+            cosine = torch.acos(cosine) # it's actullay a theta now
+            cosine = cosine.where(y_true_one_hot.eq(0), cosine + self.margin).neg() # arcface like margin
+        else:
+            cosine = cosine.where(y_true_one_hot.eq(0), cosine - self.margin)
+        cosine *= self.fixed_s if self.fixed_s is not None else self.prev_s # overwrite adaptive scale
+        return self.final_criterion(cosine, y_true_one_hot)
 
 
 class AdaCosMargin(nn.Module):
@@ -308,6 +355,7 @@ class AdaCosMargin(nn.Module):
     """
 
     def __init__(self, embedding_size=None, num_classes=None, margin=0.3, momentum=0.95):
+        raise ValueError("This class is deprecated, use AdaCos instead")
         super().__init__()
         if embedding_size is None or num_classes is None:
             self.weight = None
