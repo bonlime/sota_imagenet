@@ -1,11 +1,13 @@
 # default ResNet50 with many augmentations and regularizations + trained for extra 30 epochs
 # this is an improved version of baseline for better comparison
+# + ECA attentino
 
-name : exp108.R50_hard_reg_2
+name : exp111.R50_hard_reg_eca
 arch : resnet50
 model_params : 
   drop_rate: 0.1
   drop_connect_rate: 0.1
+  attn_type: eca
 
 weight_decay : 3e-5
 cutmix : 1.0
