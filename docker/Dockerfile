@@ -29,7 +29,7 @@ RUN pip install -U \
 ARG RANDOM_VAR=none
 RUN RANDOM_VAR=${RANDOM_VAR}
 RUN pip --no-cache-dir install --upgrade \
-    git+https://github.com/bonlime/pytorch-tools.git@add_darknet
+    git+https://github.com/bonlime/pytorch-tools.git@dev
 
 COPY . /workdir
 WORKDIR /workdir

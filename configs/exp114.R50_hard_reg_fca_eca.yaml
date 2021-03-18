@@ -1,0 +1,27 @@
+# default ResNet50 with many augmentations and regularizations + trained for extra 30 epochs
+# this is an improved version of baseline for better comparison
+# + FCA-ECA attentino (not published by insipired by FcaNet: Frequency Channel Attention Networks
+# but it uses ECA attention instead of SE in exp113 
+
+name : exp114.R50_hard_reg_fca_eca
+arch : resnet50
+model_params : 
+  drop_rate: 0.1
+  drop_connect_rate: 0.1
+  attn_type: fca-eca
+
+weight_decay : 3e-5
+cutmix : 1.0
+smooth: True
+ctwist : True
+blur: true
+crop_method: full
+ema_decay: 0.9993 # using EMA instead of Lookahead
+
+phases : [
+  {"ep": 0, "sz": 224, "bs": 256},
+  {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+  {"ep": [8, 90], "lr": [0.2, 0], "mode": "cos"},
+  {"ep": [90, 95], "lr": [0, 0.02]},
+  {"ep": [95, 120], "lr": [0.02, 0], "mode": "cos"},
+]
