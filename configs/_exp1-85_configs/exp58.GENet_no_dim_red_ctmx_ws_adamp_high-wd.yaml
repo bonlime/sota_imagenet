@@ -1,0 +1,42 @@
+# close to best experiment so far (exp48)
+# + weight standardization
+# + AdamP instead of default SGD. changed lr from 0.2 -> 0.002
+# + very high wd as suggested in Novograd paper
+
+name : exp58.GENet_no_dim_red_ctmx_ws_adamp_high-wd
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["Pre_XX", "Pre_XX", "Pre_IR", "Pre_IR"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+    ]
+    stem_width: 32
+    head_width: 2560
+    norm_act: leaky_relu
+    stem_type: s2d
+    layers: [1, 2, 6, 5]
+    channels: [128, 192, 640, 1024]
+    head_type: default
+
+optim: adamp
+weight_standardization: True
+cutmix: 1.0
+# in Novograd they use 0.12 but their BS is 2 times larger. For 2 GPUs it should be 0.12 * 0.12 ~0.01
+# but because i'm using AdamP i'll set it even smaller to 1e-3
+weight_decay : 0.001
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.002], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.002, 0], "mom": 0.9, "mode": "cos"},
+]

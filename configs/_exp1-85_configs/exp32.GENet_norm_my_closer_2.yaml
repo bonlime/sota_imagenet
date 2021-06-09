@@ -1,0 +1,40 @@
+# Reimplmentation of GENet normal model on my codebase
+# The differences from original are:
+# * 4 stages instead of 5. shouldn't really matter
+# * no residual in stride=2 blocks
+# 
+# it's different from 30 because it doesn't have mobilenetv3 head
+
+name : exp32.GENet_norm_my_closer_2
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["XX", "XX", "Btl", "IR"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "final_act": True},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "final_act": True},
+        {"bottle_ratio": 0.25, "final_act": True},
+        {"bottle_ratio": 3, "final_act": True},
+    ]
+    stem_width: 32
+    head_width: 2560
+    norm_act: relu
+    stem_type: default
+    layers: [1, 2, 6, 5]
+    channels: [128, 192, 640, 640]
+    mobilenetv3_head: False
+
+
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]

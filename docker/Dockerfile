@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/pytorch:20.06-py3
+FROM nvcr.io/nvidia/pytorch:20.09-py3
 
 # base setup
 RUN apt-get update --fix-missing && \
@@ -15,14 +15,21 @@ RUN pip --no-cache-dir install --upgrade \
     ranger-fm \
     loguru
 
-# install timm models library
+# install timm models library & inplace abn. to avoid building them each time later
 RUN pip --no-cache-dir install --upgrade \
-    git+https://github.com/rwightman/pytorch-image-models@master
+    git+https://github.com/rwightman/pytorch-image-models@master \
+    inplace-abn==1.1.0 
 
-# adding this VAR to be able to rebuild last layer only by changing its value. Usefull for updating package inside docker
-ARG RANDOM_VAR=0
+# Install fixed version of DALI. TODO: remove when container 20.11 is released
+RUN pip install -U \
+  --extra-index-url https://developer.download.nvidia.com/compute/redist \
+  nvidia-dali-cuda100==0.27.0
+
+# adding this VAR to force update of pytorch-tools each time
+ARG RANDOM_VAR=none
+RUN RANDOM_VAR=${RANDOM_VAR}
 RUN pip --no-cache-dir install --upgrade \
-    git+https://github.com/bonlime/pytorch-tools.git@add_darknet
+    git+https://github.com/bonlime/pytorch-tools.git@dev
 
 COPY . /workdir
 WORKDIR /workdir

@@ -1,0 +1,51 @@
+# same as R50 but no residual for first block in each stage
+name : exp2.simpl_R50
+arch : simpl_resnet50
+weight_decay : 3e-5
+smooth: true
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+# Epoch 89/90. training: 2504it [12:48,  3.26it/s, Acc@1=83.049, Acc@5=94.341, Loss=1.7353]
+# Epoch 89/90. validating: 101it [00:20,  4.92it/s, Acc@1=79.672, Acc@5=94.824, Loss=1.7720]
+# [08-08 12:11:02] - Train loss: 1.7341 | Acc@1: 83.0485 | Acc@5: 94.3593
+# [08-08 12:11:02] - Val   loss: 1.9311 | Acc@1: 75.9920 | Acc@5: 92.8540
+# [08-08 12:11:02] - Epoch 89: best loss improved from 1.9315 to 1.9311
+# [08-08 12:11:02] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [12:47,  3.26it/s, Acc@1=83.063, Acc@5=94.343, Loss=1.7339]
+# Epoch 90/90. validating: 101it [00:20,  5.04it/s, Acc@1=72.284, Acc@5=90.932, Loss=2.0908]
+# [08-08 12:24:10] - Train loss: 1.7339 | Acc@1: 83.0634 | Acc@5: 94.3575
+# [08-08 12:24:10] - Val   loss: 1.9314 | Acc@1: 75.9560 | Acc@5: 92.8920
+# [08-08 12:24:10] - Acc@1 75.956 Acc@5 92.892
+# [08-08 12:24:10] - Total time: 19h 51.5m
+
+
+# after first trial added this to have more confident estamation of final loss and to prevent overfit
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# Epoch 88/90. training: 2504it [12:37,  3.31it/s, Acc@1=81.940, Acc@5=93.872, Loss=1.7742]
+# Epoch 88/90. validating: 101it [00:19,  5.11it/s, Acc@1=72.500, Acc@5=91.008, Loss=2.0770]
+# [08-10 02:19:32] - Train loss: 1.7745 | Acc@1: 81.9126 | Acc@5: 93.8782
+# [08-10 02:19:32] - Val   loss: 1.9173 | Acc@1: 76.3600 | Acc@5: 93.0380
+# [08-10 02:19:32] - Epoch 88: best loss improved from 1.9174 to 1.9173
+# [08-10 02:19:32] - Epoch 89 | lr 4.58e-04
+# Epoch 89/90. training: 2504it [12:35,  3.31it/s, Acc@1=82.016, Acc@5=93.939, Loss=1.7702]
+# Epoch 89/90. validating: 101it [00:20,  4.99it/s, Acc@1=80.232, Acc@5=95.052, Loss=1.7574]
+# [08-10 02:32:28] - Train loss: 1.7692 | Acc@1: 82.0163 | Acc@5: 93.9560
+# [08-10 02:32:28] - Val   loss: 1.9173 | Acc@1: 76.3860 | Acc@5: 93.0080
+# [08-10 02:32:28] - Epoch 89: best loss improved from 1.9173 to 1.9173
+# [08-10 02:32:29] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [12:36,  3.31it/s, Acc@1=82.042, Acc@5=93.938, Loss=1.7694]
+# Epoch 90/90. validating: 101it [00:19,  5.14it/s, Acc@1=72.532, Acc@5=90.976, Loss=2.0769]
+# [08-10 02:45:25] - Train loss: 1.7694 | Acc@1: 82.0458 | Acc@5: 93.9409
+# [08-10 02:45:25] - Val   loss: 1.9171 | Acc@1: 76.3740 | Acc@5: 93.0020
+# [08-10 02:45:25] - Epoch 90: best loss improved from 1.9173 to 1.9171
+# [08-10 02:45:26] - Acc@1 76.374 Acc@5 93.002
+# [08-10 02:45:26] - Total time: 19h 34.0m
+

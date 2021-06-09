@@ -1,0 +1,35 @@
+name : exp19.simpl_R34_noact_s2d_gr_w_16_no_gr_w_str
+arch : simpl_resnet34
+# remove groups in first block in each stage. idea is to fight representation bottleneck
+# linked to exp 14
+model_params:
+  stem_type: s2d
+  groups_width: 16
+  no_groups_with_stride: true
+
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+ema_decay: 0.9993
+
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+# Epoch 89/90. training: 2504it [13:04,  3.19it/s, Acc@1=76.942, Acc@5=91.713, Loss=1.9755]
+# Epoch 89/90. validating: 101it [00:17,  5.76it/s, Acc@1=78.244, Acc@5=94.364, Loss=1.8421]
+# [08-18 07:23:37] - Train loss: 1.9751 | Acc@1: 76.9273 | Acc@5: 91.7137
+# [08-18 07:23:37] - Val   loss: 1.9988 | Acc@1: 74.6800 | Acc@5: 92.1480
+# [08-18 07:23:37] - Epoch 89: best loss improved from 1.9991 to 1.9988
+# [08-18 07:23:38] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [13:04,  3.19it/s, Acc@1=76.914, Acc@5=91.726, Loss=1.9750]
+# Epoch 90/90. validating: 101it [00:17,  5.88it/s, Acc@1=71.128, Acc@5=89.964, Loss=2.1554]
+# [08-18 07:37:00] - Train loss: 1.9750 | Acc@1: 76.9392 | Acc@5: 91.7437
+# [08-18 07:37:00] - Val   loss: 1.9987 | Acc@1: 74.6940 | Acc@5: 92.1680
+# [08-18 07:37:00] - Epoch 90: best loss improved from 1.9988 to 1.9987
+# [08-18 07:37:01] - Acc@1 74.694 Acc@5 92.168
+# [08-18 07:37:01] - Total time: 20h 2.2m
+

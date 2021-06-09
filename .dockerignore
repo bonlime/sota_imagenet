@@ -1,3 +1,5 @@
 logs/
 .vscode/
+.git/
 data
+val_features

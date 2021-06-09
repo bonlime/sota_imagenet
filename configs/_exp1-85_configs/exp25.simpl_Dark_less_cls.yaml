@@ -1,0 +1,23 @@
+# Like R34 but with BasicBlock instead of Bottleneck
+# also with removed residual in stride 2 blocks and additional conv in the head to remove representational bottleneck
+# and no last activation in each block
+# and space to depth input stem
+name : exp25.simpl_Dark
+arch : simpl_dark
+model_params:
+  stem_type: s2d
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+classes_divisor: 10 # train on 100 classes instead

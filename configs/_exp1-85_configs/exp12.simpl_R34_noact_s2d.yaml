@@ -1,0 +1,36 @@
+# R34 with removed residual in stride 2 blocks and additional conv in the head to remove
+# representational bottleneck
+# and no last activation in each block
+# and space to depth input stem
+name : exp12.simpl_R34_noact_s2d
+arch : simpl_resnet34
+model_params:
+  stem_type: s2d
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+# Epoch 89/90. training: 2504it [11:41,  3.57it/s, Acc@1=78.878, Acc@5=92.676, Loss=1.8871]
+# Epoch 89/90. validating: 101it [00:19,  5.21it/s, Acc@1=79.628, Acc@5=94.764, Loss=1.7828]
+# [08-13 05:44:40] - Train loss: 1.8864 | Acc@1: 78.8939 | Acc@5: 92.6786
+# [08-13 05:44:40] - Val   loss: 1.9386 | Acc@1: 75.8500 | Acc@5: 92.7200
+# [08-13 05:44:40] - Epoch 89: best loss improved from 1.9386 to 1.9386
+# [08-13 05:44:41] - Epoch 90 | lr 1.65e-04
+# Epoch 90/90. training: 2504it [11:43,  3.56it/s, Acc@1=78.922, Acc@5=92.641, Loss=1.8857]              ^N
+# Epoch 90/90. validating: 101it [00:20,  5.00it/s, Acc@1=72.088, Acc@5=90.668, Loss=2.0943]
+# [08-13 05:56:45] - Train loss: 1.8857 | Acc@1: 78.9320 | Acc@5: 92.6633
+# [08-13 05:56:45] - Val   loss: 1.9385 | Acc@1: 75.8560 | Acc@5: 92.7180
+# [08-13 05:56:45] - Epoch 90: best loss improved from 1.9386 to 1.9385
+# [08-13 05:56:46] - Acc@1 75.856 Acc@5 92.718
+# [08-13 05:56:46] - Total time: 18h 33.7m
+

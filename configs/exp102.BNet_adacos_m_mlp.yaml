@@ -1,0 +1,46 @@
+# close to exp99
+# + MLP in head which is only active during training. Idea is to add parameters which help training
+#   but don't slowdown inference
+# Head looks like:
+#   In train: conv1x1 (1024, 256) -> GAP -> FC (256 -> 4096) -> BN -> ReLU -> FC (4096, 256) <= embedding
+#   In val:   conv1x1 (1024, 256) -> GAP <= embedding
+# I'm not sure this would work but still want to try
+
+name : exp102.BNet_adacos_m_mlp
+arch : BNet
+model_params:
+    stage_fns: ["simpl", "simpl", "simpl", "simpl"]
+    block_fns: ["Pre_XX", "Pre_XX", "Pre_IR", "Pre_IR"]
+    stage_args: [
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"dim_reduction": "stride & expand", "bottle_ratio": 1, "force_residual": True},
+        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+        {"bottle_ratio": 1, "force_residual": True, "dw_str2_kernel_size": 9, "force_expansion": True},
+    ]
+    stem_width: 32
+    head_width: 128 # need much smaller for angular losses 2560
+    norm_act: leaky_relu
+    stem_type: s2d
+    layers: [1, 2, 6, 5]
+    channels: [128, 192, 640, 1024]
+    head_type: default_nonorm # conv1x1 -> GAP <= this is embedding
+    head_norm_act: none # not applied if head_type == default_nonorm
+
+criterion: mlp_adacos
+criterion_params:
+    margin: 0.2
+
+cutmix: 1.0
+weight_decay : 3e-5
+smooth: true
+ctwist: true
+blur: true
+# very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+ema_decay: 0.9993
+
+# lr should be BS/256 * 0.1
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]

@@ -1,1 +1,1 @@
-docker build -f docker/Dockerfile -t bonlime/imagenet:latest .
+docker build -f docker/Dockerfile --build-arg RANDOM_VAR=$(date +%s) -t bonlime/imagenet:latest .

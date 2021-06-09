@@ -2,6 +2,7 @@
 # $1 is config file
 
 docker run --rm -it --shm-size 8G --gpus '"device=0,1"' \
+  --userns=host \
   -v $IMAGENET_DIR:/workdir/data/ \
   -v `pwd`/logs/:/workdir/logs \
   -v `pwd`/configs/:/workdir/configs \

@@ -1,0 +1,35 @@
+name : exp17.csp_simpl_R34_noact_s2d_075
+arch : csp_simpl_resnet34
+# increase number of features in csp
+# and remove csp from first block
+model_params:
+  stem_type: s2d
+  csp_block_ratio: 0.75
+  x2_transition: False
+  no_first_csp: True
+
+weight_decay : 3e-5
+smooth: true
+
+ctwist: true
+ema_decay: 0.9993
+
+phases : [
+    {"ep": 0, "sz": 224, "bs": 256},
+    {"ep": [0, 8], "lr": [0, 0.2], "mom": 0.9},
+    {"ep": [8, 90], "lr": [0.2, 0], "mom": 0.9, "mode": "cos"},
+]
+
+# [08-18 03:41:49] - Epoch 88 | lr 8.98e-04
+# [08-18 03:52:47] - Train loss: 1.9498 | Acc@1: 77.4201 | Acc@5: 91.9562
+# [08-18 03:52:47] - Val   loss: 1.9703 | Acc@1: 75.2920 | Acc@5: 92.3880
+# [08-18 03:52:47] - Epoch 88: best loss improved from 1.9705 to 1.9703
+# [08-18 03:52:48] - Epoch 89 | lr 4.58e-04
+# [08-18 04:03:42] - Train loss: 1.9440 | Acc@1: 77.5878 | Acc@5: 92.0432
+# [08-18 04:03:42] - Val   loss: 1.9703 | Acc@1: 75.2920 | Acc@5: 92.3900
+# [08-18 04:03:42] - Epoch 90 | lr 1.65e-04
+# [08-18 04:14:40] - Train loss: 1.9443 | Acc@1: 77.5711 | Acc@5: 92.0437
+# [08-18 04:14:40] - Val   loss: 1.9702 | Acc@1: 75.2880 | Acc@5: 92.3960
+# [08-18 04:14:40] - Epoch 90: best loss improved from 1.9703 to 1.9702
+# [08-18 04:14:41] - Acc@1 75.288 Acc@5 92.396
+# [08-18 04:14:41] - Total time: 16h 39.4m

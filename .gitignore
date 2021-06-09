@@ -2,6 +2,7 @@
 logs/
 .vscode/
 data
+val_features
 
 # Default python gitignore
 # Byte-compiled / optimized / DLL files
