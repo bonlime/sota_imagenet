@@ -206,4 +206,3 @@ class DaliDataManager:
 
         self.loader = DaliLoader(train_cfg)
         self.val_loader = DaliLoader(val_cfg)
-
