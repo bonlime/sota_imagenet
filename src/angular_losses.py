@@ -213,6 +213,7 @@ class SphereLinearLayer(nn.Module):
         x = F.linear(F.normalize(x), F.normalize(self.weight))
         return x
 
+
 class SphereMLPLayer(nn.Module):
     """
     Layer wich in train mode uses FC - BN - Act - FC and in val mode only last FC
@@ -233,8 +234,8 @@ class SphereMLPLayer(nn.Module):
             nn.Linear(embedding_size, hidden_size, bias=False),
             nn.BatchNorm1d(hidden_size),
             act_layer,
-            nn.Linear(hidden_size, embedding_size)
-        ) 
+            nn.Linear(hidden_size, embedding_size),
+        )
         self.val_projector = val_projector
 
     def forward(self, x):
@@ -267,27 +268,29 @@ class AdaCos(nn.Module):
 
     """
 
-    def __init__(self, final_criterion, margin=0, max_s=20, fixed_s=None, momentum=0.95, arc_logits=False, arc_margin=False):
+    def __init__(
+        self, final_criterion, margin=0, max_s=20, fixed_s=None, momentum=0.95, arc_logits=False, arc_margin=False
+    ):
         super(AdaCos, self).__init__()
         self.final_criterion = final_criterion
         self.margin = margin
         self.momentum = momentum
         self.prev_s = max_s
         self.running_B = 1000  # default value is chosen so that initial S is ~10
-        self.running_cos = 0.7 # 0.7 is ~= cos(pi / 4)
+        self.running_cos = 0.7  # 0.7 is ~= cos(pi / 4)
         self.eps = 1e-7
         self.idx = 0
         self.max_s = max_s
-        self.fixed_s = fixed_s # this is stupid but AdaCos could be turned in non adapive loss....
-        self.arc_logits = arc_logits # what kind of logits to return
-        self.arc_margin = arc_margin # what kind of margin to use
+        self.fixed_s = fixed_s  # this is stupid but AdaCos could be turned in non adapive loss....
+        self.arc_logits = arc_logits  # what kind of logits to return
+        self.arc_margin = arc_margin  # what kind of margin to use
         assert (not arc_logits) or arc_margin, "arc_logits=True and arc_margin=False are not supported!"
 
     def forward(self, cosine, y_true):
         # cos_theta = cosine.clamp(-1 + self.eps, 1 - self.eps)
         # cos_theta = torch.cos(torch.acos(cos_theta + self.margin))
 
-        if y_true.dim() == 1: # if y_true is indexes
+        if y_true.dim() == 1:  # if y_true is indexes
             y_true_one_hot = torch.zeros_like(cosine)
             y_true_one_hot.scatter_(1, y_true.unsqueeze(1), 1.0)
             y_true = y_true.long()
@@ -295,19 +298,20 @@ class AdaCos(nn.Module):
             y_true_one_hot = y_true.float().clone()
             y_true = y_true_one_hot.argmax(-1).long()
 
-        
         with torch.no_grad():
             B_batch = cosine[y_true_one_hot.eq(0)].mul(self.prev_s).exp().sum().div(cosine.size(0))
             # median makes more sense than mean
             # median on cosine is the same as median on angle but on cosine is faster
             # in case of cutmix take larger image class. 0.7 is ~= cos (pi / 4). needed for better convergence at the begining
-            med_cos = cosine.gather(dim=1, index=y_true[..., None]).median() 
+            med_cos = cosine.gather(dim=1, index=y_true[..., None]).median()
 
             self.running_B = self.running_B * self.momentum + B_batch * (1 - self.momentum)
             self.running_cos = self.running_cos * self.momentum + med_cos * (1 - self.momentum)
             # self.prev_s = B_batch.log() / (med_cos - self.margin)
             self.prev_s = self.running_B.log() / (self.running_cos.clamp_min(0.7) - self.margin)
-            self.prev_s = min(self.prev_s, self.max_s) # limit maximum possible s. without this hack it blows up in first epochs 
+            self.prev_s = min(
+                self.prev_s, self.max_s
+            )  # limit maximum possible s. without this hack it blows up in first epochs
 
         self.idx += 1
         if self.idx % 1000 == 0:
@@ -321,12 +325,12 @@ class AdaCos(nn.Module):
 
         # new way
         if self.arc_logits:
-            cosine = cosine.clamp(-1 + self.eps, 1 - self.eps) # avoid instability
-            cosine = torch.acos(cosine) # it's actullay a theta now
-            cosine = cosine.where(y_true_one_hot.eq(0), cosine + self.margin).neg() # arcface like margin
+            cosine = cosine.clamp(-1 + self.eps, 1 - self.eps)  # avoid instability
+            cosine = torch.acos(cosine)  # it's actullay a theta now
+            cosine = cosine.where(y_true_one_hot.eq(0), cosine + self.margin).neg()  # arcface like margin
         else:
             cosine = cosine.where(y_true_one_hot.eq(0), cosine - self.margin)
-        cosine *= self.fixed_s if self.fixed_s is not None else self.prev_s # overwrite adaptive scale
+        cosine *= self.fixed_s if self.fixed_s is not None else self.prev_s  # overwrite adaptive scale
         return self.final_criterion(cosine, y_true_one_hot)
 
 

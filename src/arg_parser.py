@@ -13,18 +13,21 @@ from loguru import logger
 @dataclass
 class LoaderConfig:
     """common parameters for train/val pipelines"""
+
     # image size. could be different for train/val loaders!
     image_size: int = 224
     batch_size: int = 256
     # number of dataloading workers
-    workers: int = 6 # enough to fully utilize GPU
+    workers: int = 6  # enough to fully utilize GPU
     # number of classes in dataset
     num_classes: int = 1000
     _is_train: bool = False
 
+
 @dataclass
 class TrainLoaderConfig(LoaderConfig):
     """train pipeline augmentations"""
+
     _is_train: bool = True
     # min sampled area for image during training
     min_area: float = 0.08
@@ -42,13 +45,16 @@ class TrainLoaderConfig(LoaderConfig):
     re_prob: float = 0
     re_count: int = 3
 
+
 @dataclass
 class ValLoaderConfig(LoaderConfig):
     """validation pipeline"""
+
     # 50.000 should be dividable by batch_size * num_gpu
     # otherwise reduced accuracy differs from accuracy on 1 gpu
     batch_size: int = 250
     full_crop: bool = False
+
 
 @dataclass
 class DataStage:
@@ -63,7 +69,7 @@ class DataStage:
 @dataclass
 class RunnerConfig:
     stages: List = field(default_factory=lambda: [DataStage(lr=(0.1, 0))])
-    
+
     # path to checkpoint to load from
     resume: Optional[str] = None
     # sometimes we want to resume training like nothing happened, but sometimes want to start from scratch
@@ -76,7 +82,7 @@ class RunnerConfig:
     ema_decay: float = 0
     # flag to use mixed precision. on by default
     fp16: bool = True
-    
+
     extra_callbacks: List = field(
         default_factory=lambda: (
             dict(_target_="pytorch_tools.fit_wrapper.callbacks.Callback"),
@@ -98,6 +104,7 @@ class LoggerConfig:
 # defaults: List[Any] = field(default_factory=lambda: defaults)
 # data: Any = MISSING
 # cs.store(group="data", name="default_data", node=DataConfig)
+
 
 @dataclass
 class StrictConfig:
@@ -129,6 +136,7 @@ class StrictConfig:
     # this would be filled later in code
     distributed: bool = False
     is_master: bool = True
+
 
 cs = ConfigStore.instance()
 cs.store(name="strict_config", node=StrictConfig)
