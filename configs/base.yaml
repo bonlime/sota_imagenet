@@ -1,4 +1,15 @@
-no_bn_wd : true
-opt_level : O1
-optim : fused_sgd
-phases : [{"ep": 0,'sz': 224,'bs': 256, 'lr': 0, 'mom': 0.9}]
+# @package _global_
+
+## This config has to be loaded in every other configs
+defaults:
+  # strictly typed config is used to validate all parameters from here. see src/arg_parser.py for more details
+  - strict_config
+  # don't configure hydra logging at all
+  - override hydra/job_logging: disabled
+
+# everything below would override experiments configs! so take care
+hydra:
+  run:
+    dir: ${log.dir}/${log.exp_name}_${now:%Y-%m-%d}/${now:%H-%M-%S}
+  # don't create subdir for yaml files
+  output_subdir: .
