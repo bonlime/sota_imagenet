@@ -1,135 +1,164 @@
-import configargparse as argparse
+"""Replacement for old argument parser which uses Hydra for better config management"""
 
-import pytorch_tools as pt
-import pytorch_tools.models as models
+from typing import Optional, Dict, List, Any, Tuple, Union
+from dataclasses import dataclass, field
+
+import hydra
+from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
+
+from loguru import logger
 
 
-def parse_args():
+@dataclass
+class LoaderConfig:
+    """common parameters for train/val pipelines"""
+    # image size. could be different for train/val loaders!
+    image_size: int = 224
+    batch_size: int = 256
+    # number of dataloading workers
+    workers: int = 6 # enough to fully utilize GPU
+    # number of classes in dataset
+    num_classes: int = 1000
+    _is_train: bool = False
 
-    model_names = sorted(
-        name
-        for name in models.__dict__
-        if name.islower() and not name.startswith("__") and callable(models.__dict__[name])
+@dataclass
+class TrainLoaderConfig(LoaderConfig):
+    """train pipeline augmentations"""
+    _is_train: bool = True
+    # min sampled area for image during training
+    min_area: float = 0.08
+    # probability of applying Gaussian Blur
+    blur_prob: float = 0
+    # probability of turning image into grayscale
+    gray_prob: float = 0
+    # probability of applying brightness-contrast-hue-saturation augmentation
+    color_twist_prob: float = 0
+    # if True randomly use triangular / cubic interpolations for images. Works as a strong augmentation and makes model
+    # very robust to interpolation method during inference
+    random_interpolation: bool = False
+    # random erase probability. removes rectangle patches from image and feel them with mean value
+    # Ref: https://arxiv.org/pdf/1708.04896.pdf
+    re_prob: float = 0
+    re_count: int = 3
+
+@dataclass
+class ValLoaderConfig(LoaderConfig):
+    """validation pipeline"""
+    # 50.000 should be dividable by batch_size * num_gpu
+    # otherwise reduced accuracy differs from accuracy on 1 gpu
+    batch_size: int = 250
+    full_crop: bool = False
+
+@dataclass
+class DataStage:
+    # start and end epoch for current stage
+    start: int = 0
+    end: int = 90
+    lr: Optional[Tuple[float, float]] = None
+    lr_mode: Optional[str] = "linear"
+    extra_args: Optional[Dict] = None
+
+
+@dataclass
+class RunnerConfig:
+    stages: List = field(default_factory=lambda: [DataStage(lr=(0.1, 0))])
+    
+    # path to checkpoint to load from
+    resume: Optional[str] = None
+    # sometimes we want to resume training like nothing happened, but sometimes want to start from scratch
+    load_start_epoch: bool = True
+    start_epoch: int = 0
+
+    # usefull to emulate larger batch size. take care to scale LR accordingly!
+    accumulate_steps: int = 1
+    # Exponential moving average decay. i usually choose decay as 0.3 ^ (-step_per_epoch). typically should be 0.999 for 4 GPUs and 0.9997 for 1 GPU
+    ema_decay: float = 0
+    # flag to use mixed precision. on by default
+    fp16: bool = True
+    
+    extra_callbacks: List = field(
+        default_factory=lambda: (
+            dict(_target_="pytorch_tools.fit_wrapper.callbacks.Callback"),
+            dict(_target_="pytorch_tools.fit_wrapper.callbacks.Callback"),
+        )
     )
+    # if True, skip training and only evaluate model. should be combined with passing `resume` otherwise this is useless
+    evaluate: bool = False
 
-    parser = argparse.ArgumentParser(
-        description="PyTorch ImageNet Training",
-        default_config_files=["configs/base.yaml"],
-        args_for_setting_config_path=["-c", "--config_file"],
-        config_file_parser_class=argparse.YAMLConfigFileParser,
-    )
 
-    ## MODEL
-    add_arg = parser.add_argument
-    add_arg(
-        "--arch",
-        "-a",
-        default="resnet18",
-        help="model architecture: " + " | ".join(model_names) + " (default: resnet18)",
-    )
-    add_arg("--model_params", type=eval, default={}, help="Additional model params as kwargs")
-    add_arg(
-        "--weight_standardization", action="store_true", help="Change convs to WS Convs. See paper for details",
-    )
-    add_arg("--ema_decay", type=float, default=0, help="If not zero, enables EMA decay for model weights")
-    add_arg("--sigmoid_trick", action="store_true", help="If True sets last bias to speedup convergence")
+@dataclass
+class LoggerConfig:
+    exp_name: str = "test_run"
+    dir: str = "logs"
 
-    ## OPTIMIZER
-    add_arg("--optim", type=str, default="SGD", help="Optimizer to use (default: sgd)")
-    add_arg("--optim_params", type=eval, default={}, help="Additional optimizer params as kwargs")
-    add_arg("--lookahead", action="store_true", help="Flag to wrap optimizer with Lookahead wrapper")
-    add_arg(
-        "--weight_decay", "--wd", default=1e-4, type=float, metavar="W", help="weight decay (default: 1e-4)",
-    )
-    add_arg("--no_bn_wd", action="store_true", help="Remove batch norm from weight decay")
 
-    ## DATALOADER
-    add_arg("--sz", type=int, default=224)
-    add_arg("--bs", type=int, default=256)
-    add_arg("--min_area", type=float, default=0.08)
-    add_arg("--workers", "-j", default=4, type=int, help="number of data loading workers (default: 4)")
-    add_arg(
-        "--mixup", type=float, default=0, help="Alpha for mixup augmentation. If 0 then mixup is diabled",
-    )
-    add_arg(
-        "--cutmix", type=float, default=0, help="Alpha for cutmix augmentation. If 0 then cutmix is diabled",
-    )
-    add_arg("--cutmix_prob", type=float, default=0.5)
-    add_arg("--ctwist", action="store_true", help="Turns on color twist augmentation")
-    add_arg("--resize_method", type=str, default="triang", help="Interpolation type")
-    add_arg(
-        "--crop_method",
-        type=str,
-        default="default",
-        choices=["default", "full"],
-        help="If `full` take crops from full imagem not 1.14% resized as default",
-    )
-    add_arg("--classes_divisor", type=int, default=1, help="Used for reduction of number of classes")
-    add_arg("--use_tfrecords", action="store_true", help="Flag to read data from tfrecords instead of files")
-    add_arg("--rect_validation", action="store_true", help="Flag to perform validation on rectangles")
-    add_arg("--jitter", action="store_true", help="Flag to add jitter augmentation")
-    add_arg("--blur", action="store_true", help="Flag to add jitter augmentation")
-    add_arg("--random_interpolation", action="store_true", help="Flag to use random interpolation for train")
-    add_arg("--fixmatch", action="store_true", help="Flag to use fixmatch technique augmentation")
+# this 4 lines are an example of how to make some attributes a group. maybe usefull at some stage
+# defaults = [{"data": "default_data"}]
+# defaults: List[Any] = field(default_factory=lambda: defaults)
+# data: Any = MISSING
+# cs.store(group="data", name="default_data", node=DataConfig)
 
-    ## CRITERION
-    add_arg("--smooth", action="store_true", help="Use label smoothing")
-    add_arg("--criterion", type=str, default="cce", help="Criterion to use")
-    add_arg("--criterion_params", type=eval, default={}, help="Additional loss params as kwargs")
-    add_arg("--hard_pct", type=float, default=0.0, help="If large that zero, wraps loss in HardNegativeMiner")
+@dataclass
+class StrictConfig:
+    loader: TrainLoaderConfig = TrainLoaderConfig()
+    val_loader: ValLoaderConfig = ValLoaderConfig()
 
-    ## TRAINING
-    add_arg(
-        "--phases",
-        type=eval,
-        action="append",
-        help="Specify epoch order of data resize and learning rate schedule:"
-        '[{"ep":0,"sz":128,"bs":64},{"ep":5,"lr":1e-2}]',
-    )
-    add_arg(
-        "--start_epoch", default=0, type=int, metavar="N", help="manual epoch number (useful on restarts)",
-    )
-    add_arg("--resume", default="", type=str, help="path to latest checkpoint (default: none)")
-    add_arg("--evaluate", "-e", action="store_true", help="evaluate model on validation set")
-    add_arg(
-        "--opt_level",
-        default="O0",
-        type=str,
-        choices=["O0", "O1", "O2", "O3"],
-        help='optimizatin level for apex. (default: "00")',
-    )
-    add_arg("--short_epoch", action="store_true", help="make epochs short (for debugging)")
-    ## OTHER
-    add_arg(
-        "--local_rank",
-        "--gpu",
-        default=0,
-        type=int,
-        help="Used for multi-process training. Can either be manually set "
-        + "or automatically set by using 'python -m multiproc'.",
-    )
-    add_arg("--deterministic", action="store_true")
-    add_arg("--accumulate_steps", type=int, default=1, help="Num steps for gradient accumulation")
+    model: Dict[str, Any] = field(default_factory=lambda: dict(_target_="pytorch_tools.models.resnet18"))
+    # flag to convert all convs to WS convs
+    weight_standardization: bool = False
 
-    ## LOGGING
-    add_arg("--logdir", default="logs", type=str, help="where logs go")
-    add_arg(
-        "-n", "--name", type=str, default="", dest="name", help="Name of this run. If empty it would be a timestamp",
+    # by default using fused version of SGD because it's slightly faster
+    optim: Dict[str, Any] = field(
+        default_factory=lambda: dict(_target_="torch.optim._multi_tensor.SGD", lr=0, weight_decay=1e-4, momentum=0.9)
     )
-    add_arg("--no_timestamp", action="store_true", help="Disables adding timestamp to run name")
+    # default loss is CCE
+    criterion: Dict[str, Any] = field(
+        default_factory=lambda: dict(_target_="pytorch_tools.losses.smooth.CrossEntropyLoss")
+    )
+    run: RunnerConfig = RunnerConfig()
+    log: LoggerConfig = LoggerConfig()
+    # if True, would only train for 10 steps each epoch
+    debug: bool = False
+    # if given would make run reproducible
+    random_seed: Optional[int] = None
 
-    args, not_parsed = parser.parse_known_args()
-    print(f"Not parsed args: {not_parsed}")
+    # this arg should be set in your shell
+    world_size: int = "${env:WORLD_SIZE}"
+    local_rank: int = "${env:LOCAL_RANK}"
+    # this would be filled later in code
+    distributed: bool = False
+    is_master: bool = True
 
-    # detect distributed
-    args.world_size = pt.utils.misc.env_world_size()
-    args.distributed = args.world_size > 1
+cs = ConfigStore.instance()
+cs.store(name="strict_config", node=StrictConfig)
 
-    # Only want master rank logging to tensorboard
-    args.is_master = not args.distributed or args.local_rank == 0
-    timestamp = pt.utils.misc.get_timestamp()
-    if args.name:
-        args.name = args.name if args.no_timestamp else args.name + "_" + timestamp
-    else:
-        args.name = timestamp
-    return args
+
+@hydra.main(config_path="../configs", config_name="base")
+def test_app(cfg: StrictConfig) -> None:
+    # test that parsing works as expected
+    print(OmegaConf.to_yaml(cfg))
+
+    # import os
+    # print("Working directory : {}".format(os.getcwd()))
+
+    # import subprocess
+    # kwargs = {"universal_newlines": True, "stdout": subprocess.PIPE}
+    # with open("commit_hash.txt", "w") as f:
+    #     f.write(subprocess.run(["git", "rev-parse", "--short", "HEAD"], **kwargs).stdout)
+    # with open("diff.txt", "w") as f:
+    #     f.write(subprocess.run(["git", "diff"], **kwargs).stdout)
+
+    # model = hydra.utils.call(cfg.model)
+    # optim = hydra.utils.call(cfg.optim, model.parameters())
+    # print(optim)
+    # crit = hydra.utils.call(cfg.criterion)
+    # print(crit)
+    # logger.info("Log inside argparse")
+    # extra_clb = [hydra.utils.call(clb_cfg) for clb_cfg in cfg.runner.extra_callbacks]
+    # print(extra_clb)
+    return 100
+
+
+if __name__ == "__main__":
+    test_app()

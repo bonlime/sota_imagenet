@@ -1,12 +1,27 @@
-name : test_eval
-arch : tresnetxl
-model_params : 
-    pretrained: imagenet
-    norm_layer: frozenabn
-    # deep_stem: true
-    # antialias: true
-evaluate: true
-phases : [
-    {"ep": 0, "sz": 448, "bs": 250},
-    {"ep": [0, 1], "lr": [0, 0], "mom": 0.9},
-]
+# @package _global_
+
+# python3 train.py --config-name eval_config +hydra_exp={experiment name}
+defaults: 
+  # setup logging
+  - base
+
+log:
+  exp_name : test_eval
+
+# evaluate: true
+train:
+  phases:
+    - {"ep": 0, "sz": 448, "bs": 250}
+    - {"ep": [0, 1], "lr": [0, 0], "mom": 0.9}
+
+
+# model_params : 
+#     pretrained: imagenet
+#     norm_layer: frozenabn
+#     # deep_stem: true
+#     # antialias: true
+# evaluate: true
+# phases : [
+#     {"ep": 0, "sz": 448, "bs": 250},
+#     {"ep": [0, 1], "lr": [0, 0], "mom": 0.9},
+# ]

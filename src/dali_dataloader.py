@@ -1,351 +1,209 @@
-"""Dali dataloader for imagenet"""
+"""
+data loader using NVIDIA DALI v1.2
+
+there are still two things missing comared to previous version of loader
+TODO: (emil 19.06.21) TFRecords data loading
+TODO: (emil 19.06.21) Rectangular Validation
+TODO: (emil 19.06.21) mixmatch pipeline 
+"""
 import math
 import torch
-import random
-import numpy as np
-from PIL import Image
-from pathlib import Path
-import nvidia.dali as dali
-from nvidia.dali import ops
-from nvidia.dali import types
-from nvidia.dali.pipeline import Pipeline
-from nvidia.dali.plugin.pytorch import DALIGenericIterator, DALIClassificationIterator
-from pytorch_tools.utils.misc import env_rank, env_world_size
+from copy import deepcopy
+from loguru import logger
+from omegaconf import OmegaConf
+
+from nvidia.dali import pipeline_def
+import nvidia.dali.fn as fn
+import nvidia.dali.types as types
+from nvidia.dali.plugin.base_iterator import LastBatchPolicy
+from nvidia.dali.plugin.pytorch import DALIClassificationIterator
+
+from pytorch_tools.utils.misc import env_rank, env_world_size, listify
+
+from src.arg_parser import LoaderConfig, StrictConfig, TrainLoaderConfig, ValLoaderConfig
 
 ROOT_DATA_DIR = "data/"  # images should be mounted or linked to data/ folder inside this repo
-RESIZE_DICT = {
-    "nn": types.INTERP_NN,
-    "linear": types.INTERP_LINEAR,
-    "triang": types.INTERP_TRIANGULAR,
-    "cubic": types.INTERP_CUBIC,
-    "lancz": types.INTERP_LANCZOS3,
-}
+ROOT_DATA_DIR = "/data/datasets/ImageNet/raw-data/"
 
 
-class ValRectExternalInputIterator:
-    """EII for making rectangle crops using Dali
-    
-    All images are first sorted by aspect ratio and then are window averaged with
-    window of size BS so that all images in the batch have the same aspect ratio
-    
-    """
+# values used for normalization. there is no reason to use Imagenet mean/std so i'm normalizing to [-5, 5]
+DATA_MEAN = (0.5 * 255, 0.5 * 255, 0.5 * 255)
+DATA_STD = (0.2 * 255, 0.2 * 255, 0.2 * 255)
 
-    def __init__(self, batch_size=32, size=224):
-        data_dir = Path(ROOT_DATA_DIR) / "raw-data" / "val"
-        # according to the docs DALI File Reader does the same
-        folder_names = sorted([i.name for i in data_dir.iterdir() if i.is_dir()])
-        FOLDER_TO_CLASS = {f: i for i, f in enumerate(folder_names)}
-        # get AR for all validation images
-        all_images = np.array(list(data_dir.glob("*/*.JPEG")))
-        images_size = np.array([Image.open(i).size for i in all_images])
-        images_ar = images_size[:, 0] / images_size[:, 1]  # aspect ratios
-
-        # sort by AR and take moving average with window of size BS
-        self.sorted_ar = images_ar[np.argsort(images_ar)].round(2)  # round to have nicer prints
-        sorted_images = all_images[np.argsort(images_ar)]
-        self.sorted_labels = np.array([FOLDER_TO_CLASS[i.parent.name] for i in sorted_images])
-        for i in range(0, len(self.sorted_ar), batch_size):
-            self.sorted_ar[i : i + batch_size] = self.sorted_ar[i : i + batch_size].mean()
-        self.sorted_images = list(map(str, sorted_images))  # turn to str to avoid doing it later
-
-        # account for world size and rank
-        local_rank = env_rank()
-        per_shard = len(self.sorted_images) // env_world_size()  # number of images in this process
-        self.sorted_images = self.sorted_images[local_rank * per_shard : (local_rank + 1) * per_shard]
-        self.sorted_labels = self.sorted_labels[local_rank * per_shard : (local_rank + 1) * per_shard]
-        self.sorted_ar = self.sorted_ar[local_rank * per_shard : (local_rank + 1) * per_shard]
-
-        self.batch_size = batch_size
-        self.size = size
-        self.i = 0
-        self.n = len(self.sorted_images)
-
-    def __iter__(self):
-        return self
-
-    def __len__(self):
-        return self.n
-
-    def __next__(self):
-        imgs = []
-        labels = []
-        resize_shapes = []
-        for _ in range(self.batch_size):
-            img_f = open(self.sorted_images[self.i], "rb")
-            imgs.append(np.frombuffer(img_f.read(), dtype=np.uint8))
-            labels.append(self.sorted_labels[self.i])
-            # resize shortest size to `size`
-            ar = self.sorted_ar[self.i]
-            if ar <= 1:
-                h, w = (self.size + 8) // 16 * 16, (self.size / ar + 8) // 16 * 16
-            else:
-                h, w = (self.size * ar + 8) // 16 * 16, (self.size + 8) // 16 * 16
-            resize_shapes.append(np.array([w, h], dtype=np.float32))
-            self.i = (self.i + 1) % self.n
-        return (imgs, labels, resize_shapes)
-
-
-class ValRectPipe(Pipeline):
-    """Loader which returns images with AR almost the same as original, minimizing loss of information"""
-
-    def __init__(self, bs=25, workers=4, sz=224, resize_method="triang"):
-        super().__init__(bs, workers, env_rank(), seed=42)
-        external_iterator = ValRectExternalInputIterator(batch_size=bs, size=sz)
-        self.source = ops.ExternalSource(source=external_iterator, num_outputs=3)
-        self.decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
-        self.resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method])
-        self.normalize = ops.CropMirrorNormalize(
-            device="gpu",
-            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-            std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
-            dtype=types.FLOAT,
-            output_layout=types.NCHW,
-        )
-
-    def define_graph(self):
-        image, label, resize_shape = self.source()
-        image = self.decode(image)
-        image = self.resize(image, size=resize_shape)
-        image = self.normalize(image)
-        return image, label.gpu()
-
-
-class ValRectLoader:
-    """Wrap dali to look like torch dataloader"""
-
-    def __init__(self, bs=32, workers=4, sz=224, resize_method="triang"):
-        """Returns train or val iterator over Imagenet data"""
-        pipe = ValRectPipe(bs=bs, workers=workers, sz=sz, resize_method=resize_method)
-        pipe.build()
-        self.loader = DALIClassificationIterator(
-            pipe, size=50000 // env_world_size(), auto_reset=True, fill_last_batch=False, dynamic_shape=True
-        )
-
-    def __len__(self):
-        return math.ceil(self.loader._size / self.loader.batch_size)
-
-    def __iter__(self):
-        return ((batch[0]["data"], batch[0]["label"].squeeze().long()) for batch in self.loader)
+# DATA_MEAN = (0.485 * 255, 0.456 * 255, 0.406 * 255)
+# DATA_STD = (0.229 * 255, 0.224 * 255, 0.225 * 255)
 
 
 def mix(condition, true_case, false_case):
-    """multiplex between two images"""
+    """multiplex between two images. needed because DALI doesn't support conditional execution"""
     neg_condition = condition ^ True
     return condition * true_case + neg_condition * false_case
 
 
-class DefaultPipe(Pipeline):
-    def __init__(
-        self,
-        train=False,
-        bs=32,
-        workers=4,
-        sz=224,
-        ctwist=True,
-        jitter=False,
-        blur=False,
-        min_area=0.08,
-        resize_method="triang",
-        crop_method="default",
-        random_interpolation=False,  # if given ignores `resize_method` and uses random
-        use_tfrecords=False,
-    ):
+@pipeline_def
+def train_pipeline(cfg: TrainLoaderConfig):
 
-        local_rank, world_size = env_rank(), env_world_size()
-        super().__init__(bs, workers, local_rank, seed=42)
+    jpeg, label = fn.readers.file(
+        file_root=ROOT_DATA_DIR + "/train/",
+        random_shuffle=True,
+        shard_id=env_rank(),
+        num_shards=env_world_size(),
+        name="Reader",
+    )
+    image = fn.decoders.image_random_crop(
+        jpeg,
+        device="mixed",
+        random_aspect_ratio=[0.75, 1.25],
+        random_area=[cfg.min_area, 1.0],
+        num_attempts=100,
+        output_type=types.RGB,
+    )
 
-        # only shuffle train data
-        if use_tfrecords:
-            records_files_f = ROOT_DATA_DIR + "/tfrecords/"
-            records_files_f += "train-{:05d}-of-01024" if train else "validation-{:05d}-of-00128"
-            records_files = [records_files_f.format(i) for i in range(1024 if train else 128)]
-            idx_files_f = ROOT_DATA_DIR + "/record_idxs/"
-            idx_files_f += "train-{:05d}-of-01024" if train else "validation-{:05d}-of-00128"
-            idx_files = [idx_files_f.format(i) for i in range(1024 if train else 128)]
-            self.input = dali.ops.TFRecordReader(
-                path=records_files,
-                index_path=idx_files,
-                random_shuffle=train,
-                initial_fill=10000,  # generate a lot of random numbers in advance
-                features={
-                    "image/class/label": dali.tfrecord.FixedLenFeature([], dali.tfrecord.int64, -1),
-                    "image/filename": dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-                    "image/encoded": dali.tfrecord.FixedLenFeature((), dali.tfrecord.string, ""),
-                },
-            )
-        else:
-            data_dir = ROOT_DATA_DIR + "320/" if sz < 224 and train else ROOT_DATA_DIR + "raw-data/"
-            data_dir += "train/" if train else "val/"
-            self.input = ops.FileReader(
-                file_root=data_dir, random_shuffle=train, shard_id=local_rank, num_shards=world_size,
-            )
-        self.train_decode = ops.ImageDecoderRandomCrop(
-            output_type=types.RGB,
-            device="mixed",
-            random_aspect_ratio=[0.75, 1.25],
-            random_area=[min_area, 1.0],
-            num_attempts=100,
-        )
-        self.val_decode = ops.ImageDecoder(device="mixed", output_type=types.RGB)
-        # train resize doesn't preserve aspect ratio on purpose
-        # works much better with INTERP_TRIANGULAR
-        self.train_resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method], resize_x=sz, resize_y=sz)
-        # need all types of resize to support random interpolation
-        self.resize_lin = ops.Resize(device="gpu", interp_type=types.INTERP_LINEAR, resize_x=sz, resize_y=sz)
-        self.resize_tri = ops.Resize(device="gpu", interp_type=types.INTERP_TRIANGULAR, resize_x=sz, resize_y=sz)
-        self.resize_cub = ops.Resize(device="gpu", interp_type=types.INTERP_CUBIC, resize_x=sz, resize_y=sz)
-        self.resize_lan = ops.Resize(device="gpu", interp_type=types.INTERP_LANCZOS3, resize_x=sz, resize_y=sz)
+    image_tr = fn.resize(image, device="gpu", size=cfg.image_size, interp_type=types.INTERP_TRIANGULAR)
+    if cfg.random_interpolation:
+        image_cub = fn.resize(image, device="gpu", size=cfg.image_size, interp_type=types.INTERP_CUBIC)
+        image = mix(fn.random.coin_flip(probability=0.5), image_cub, image_tr)
+    else:
+        image = image_tr
 
-        # default Imagenet crop. 14% bigger and dividable by 16 then center crop
-        crop_size = math.ceil((sz * 1.14 + 8) // 16 * 16) if crop_method == "default" else sz
-        self.val_resize = ops.Resize(device="gpu", interp_type=RESIZE_DICT[resize_method], resize_shorter=crop_size)
-        self.normalize = ops.CropMirrorNormalize(
+    if cfg.blur_prob > 0:
+        blur_image = fn.gaussian_blur(image, device="gpu", window_size=11, sigma=fn.random.uniform(range=[0.5, 1.1]))
+        image = mix(fn.random.coin_flip(probability=cfg.blur_prob, dtype=types.BOOL), blur_image, image)
+
+    if cfg.color_twist_prob > 0:
+        image_ct = fn.color_twist(
+            image,
             device="gpu",
-            crop=(sz, sz),
-            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
-            std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
-            dtype=types.FLOAT,
-            output_layout=types.NCHW,
+            contrast=fn.random.uniform(range=[0.7, 1.3]),
+            brightness=fn.random.uniform(range=[0.7, 1.3]),
+            hue=fn.random.uniform(range=[-20, 20]),  # in degrees
+            saturation=fn.random.uniform(range=[0.7, 1.3]),
         )
-        # additional train augs
-        self.contrast = ops.BrightnessContrast(device="gpu")
-        self.hsv = ops.Hsv(device="gpu")
-        self.jitter_op = ops.Jitter(device="gpu")
-        self.coin = ops.CoinFlip()
-        self.bool = ops.Cast(dtype=types.DALIDataType.BOOL)
-        self.blur_op = ops.GaussianBlur(device="gpu", window_size=11)  # 15 is just a random const
-        # jitter is a very strong aug want to have it rarely
-        self.coin_jitter = ops.CoinFlip(probability=0.2)
-        self.rng1 = ops.Uniform(range=[0, 1])  # for crop
-        self.rng2 = ops.Uniform(range=[0.85, 1.15])  # for color augs
-        self.rng3 = ops.Uniform(range=[-15, 15])  # for hue
-        self.blur_sigma_rng = ops.Uniform(range=[0.8, 1.4])  # default sigma for WS=11 is 1.4 want it also to be random
-        self.train = train
-        self.use_tfrecords = use_tfrecords
-        self.ctwist = ctwist
-        self.use_jitter = jitter
-        self.use_blur = blur
-        self.random_interpolation = random_interpolation
+        image = mix(fn.random.coin_flip(probability=cfg.color_twist_prob, dtype=types.BOOL), image_ct, image)
 
-    def _train_resize(self, images):
-        if not self.random_interpolation:
-            return self.train_resize(images)
-        lin_tri = mix(self.bool(self.coin()), self.resize_lin(images), self.resize_tri(images))
-        cub_lan = mix(self.bool(self.coin()), self.resize_cub(images), self.resize_lan(images))
-        return mix(self.bool(self.coin()), lin_tri, cub_lan)
+    if cfg.gray_prob > 0:
+        grayscale_coin = fn.cast(fn.random.coin_flip(probability=cfg.gray_prob), dtype=types.FLOAT)
+        image = fn.hsv(image, device="gpu", saturation=grayscale_coin)
 
-    def define_graph(self):
-        # Read images and labels
-        if self.use_tfrecords:
-            inputs = self.input(name="Reader")
-            images = inputs["image/encoded"]
-            labels = inputs["image/class/label"]
-        else:
-            images, labels = self.input(name="Reader")
+    if cfg.re_prob:  # random erasing
+        image_re = fn.erase(
+            image,
+            device="gpu",
+            anchor=fn.random.uniform(range=(0.0, 1), shape=cfg.re_count * 2),
+            shape=fn.random.uniform(range=(0.05, 0.25), shape=cfg.re_count * 2),
+            axis_names="HW",
+            fill_value=DATA_MEAN,
+            normalized_anchor=True,
+            normalized_shape=True,
+        )
+        image = mix(fn.random.coin_flip(probability=cfg.re_prob, dtype=types.BOOL), image_re, image)
 
-        # Decode and augmentation
-        if self.train:
-            images = self.train_decode(images)
-            if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
-                images = self.jitter_op(images, mask=self.coin_jitter())
-            images = self._train_resize(images)
-            if self.use_blur:  # optional 50% blur. use it after resize so that it's more determinitstic
-                images = mix(self.bool(self.coin()), images, self.blur_op(images, sigma=self.blur_sigma_rng()))
-            if self.ctwist:
-                images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
-                images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
-            images = self.normalize(images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
-        else:
-            images = self.val_decode(images)
-            images = self.val_resize(images)
-            images = self.normalize(images)
-
-        return images, labels.gpu()
+    image = fn.crop_mirror_normalize(
+        image,
+        device="gpu",
+        crop=(cfg.image_size, cfg.image_size),
+        mirror=fn.random.coin_flip(probability=0.5),
+        mean=DATA_MEAN,
+        std=DATA_STD,
+        dtype=types.FLOAT,
+        output_layout=types.NCHW,
+    )
+    label = fn.one_hot(label, num_classes=cfg.num_classes).gpu()
+    return image, label
 
 
-class FixMatchPipe(DefaultPipe):
-    """pipe which returns augmented and non augmented versions of the same image"""
+@pipeline_def
+def val_pipeline(cfg: ValLoaderConfig):
+    jpeg, label = fn.readers.file(
+        file_root=ROOT_DATA_DIR + "/val/", shard_id=env_rank(), num_shards=env_world_size(), name="Reader",
+    )
 
-    def define_graph(self):
-        # Read images and labels
-        if self.use_tfrecords:
-            inputs = self.input(name="Reader")
-            images = inputs["image/encoded"]
-            labels = inputs["image/class/label"]
-        else:
-            images, labels = self.input(name="Reader")
-        ## Process val first
-        val_images = self.val_decode(images)
-        val_images = self.val_resize(val_images)
-        val_images = self.normalize(val_images)
-        ## Decode and augment train
-        images = self.train_decode(images)
-        if self.use_jitter:  # want to jitter before resize so that following op smoothes the jitter
-            images = self.jitter_op(images, mask=self.coin_jitter())
-        images = self._train_resize(images)
-        if self.use_blur:  # optional 50% blur
-            images = mix(self.bool(self.coin()), images, self.blur_op(images, sigma=self.blur_sigma_rng()))
-        if self.ctwist:
-            images = self.contrast(images, contrast=self.rng2(), brightness=self.rng2())
-            images = self.hsv(images, hue=self.rng3(), saturation=self.rng2(), value=self.rng2())
-        images = self.normalize(images, mirror=self.coin(), crop_pos_x=self.rng1(), crop_pos_y=self.rng1())
+    image = fn.decoders.image(jpeg, device="mixed", output_type=types.RGB)
 
-        return images, val_images, labels.gpu()
+    crop_size = cfg.image_size if cfg.full_crop else math.ceil((cfg.image_size * 1.14 + 8) // 16 * 16)
+    image = fn.resize(image, device="gpu", interp_type=types.INTERP_TRIANGULAR, resize_shorter=crop_size)
+
+    image = fn.crop_mirror_normalize(
+        image,
+        device="gpu",
+        crop=(cfg.image_size, cfg.image_size),
+        mean=DATA_MEAN,
+        std=DATA_STD,
+        dtype=types.FLOAT,
+        output_layout=types.NCHW,
+    )
+    label = fn.one_hot(label, num_classes=cfg.num_classes).gpu()
+    return image, label
 
 
 class DaliLoader:
     """Wrap dali to look like torch dataloader"""
 
-    def __init__(
-        self,
-        train=False,
-        bs=32,
-        workers=4,
-        sz=224,
-        ctwist=True,
-        min_area=0.08,
-        resize_method="triang",
-        classes_divisor=1,  # reduce number of classes by // cls_div
-        use_tfrecords=False,
-        crop_method="default",  # one of `default` or `full`
-        jitter=False,  # use pixel jitter augmentation
-        blur=False,  # optional gaussian blur
-        random_interpolation=False,
-        fixmatch=False,  # doubles the size of BS by also returning non augmented copies of image
-    ):
+    def __init__(self, cfg: LoaderConfig):
         """Returns train or val iterator over Imagenet data"""
-        fixmatch = fixmatch and train  # only changes train behavior
-        pipe = (FixMatchPipe if fixmatch else DefaultPipe)(
-            train=train,
-            bs=bs,
-            workers=workers,
-            sz=sz,
-            ctwist=ctwist,
-            jitter=jitter,
-            blur=blur,
-            min_area=min_area,
-            resize_method=resize_method,
-            crop_method=crop_method,
-            use_tfrecords=use_tfrecords,
-            random_interpolation=random_interpolation,
-        )
+        pipeline = train_pipeline if cfg._is_train else val_pipeline
+        pipe = pipeline(batch_size=cfg.batch_size, num_threads=cfg.workers, device_id=env_rank(), cfg=cfg)
         pipe.build()
-        self.loader = DALIGenericIterator(
-            pipe,
-            output_map=["data", "val_data", "label"] if fixmatch else ["data", "label"],
-            reader_name="Reader",
-            auto_reset=True,
-            fill_last_batch=train,  # want real accuracy on validiation
+        self.loader = DALIClassificationIterator(
+            pipe, reader_name="Reader", auto_reset=True, last_batch_policy=LastBatchPolicy.DROP,
         )
-        self.cls_div = classes_divisor
-        self.fixmatch = fixmatch
 
     def __len__(self):
         return math.ceil(self.loader._size / self.loader.batch_size)
 
     def __iter__(self):
-        for b in self.loader:  # b = batch
-            target = b[0]["label"].squeeze().long() // self.cls_div
-            target = torch.cat([target, target]) if self.fixmatch else target
-            images = torch.cat([b[0]["data"], b[0]["val_data"]], dim=0) if self.fixmatch else b[0]["data"]
-            yield images, target
+        return ((batch[0]["data"], batch[0]["label"]) for batch in self.loader)
+
+
+class DaliDataManager:
+    """Wrapper to reinitialize loaders durring training. Allows progressive image resize, augmentaiton increase/decrease and etc."""
+
+    def __init__(self, cfg: StrictConfig):
+        self.cfg = cfg
+        self.stages = cfg.run.stages
+        self.tot_epochs = max([stage.end for stage in self.stages])
+        self._validate_stages()
+
+        self.loader = None
+        self.val_loader = None
+        self.start_epoch = None
+        self.end_epoch = None
+
+    def __len__(self):
+        return len(self.stages)
+
+    def _validate_stages(self):
+        end = 0
+        for stage in self.stages:
+            assert stage.start == end, "error in data stages. start != end"
+            assert stage.end > stage.start, "error in data stages, end <= start"
+            end = stage.end
+
+    def set_stage(self, idx: int) -> None:
+        self.start_epoch = self.stages[idx].start
+        self.end_epoch = self.stages[idx].end
+
+        if self.stages[idx].extra_args is None and self.loader is not None:
+            return  # only learning rate changed, no need to create loader
+
+        train_cfg = deepcopy(self.cfg.loader)
+        val_cfg = deepcopy(self.cfg.val_loader)
+
+        if self.stages[idx].extra_args is not None:
+            for key, value in self.stages[idx].extra_args.items():
+                setattr(train_cfg, key, value)
+
+        # for now only image size changes in val loader
+        val_cfg.image_size = train_cfg.image_size
+
+        logger.info(f"Loader changed. New data config:\n{OmegaConf.to_yaml(train_cfg)}")
+
+        # remove previous loader to prevent DALI errors
+        if self.loader is not None:
+            del self.loader
+            del self.val_loader
+            torch.cuda.empty_cache()
+
+        self.loader = DaliLoader(train_cfg)
+        self.val_loader = DaliLoader(val_cfg)
+

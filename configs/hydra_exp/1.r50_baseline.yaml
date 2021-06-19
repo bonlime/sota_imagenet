@@ -1,0 +1,32 @@
+# @package _global_
+
+# config close to one in Nvidia/DeepLearning examples. the results are the same
+# previous results were:
+# gives Acc@1 77.438 Acc@5 93.658 on v0.1.4
+# Total time: 10h 41.7m (4 x V100)
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  exp_name: r50_baseline
+
+# use larger weight decay because of label smoothing
+optim:
+  weight_decay: 3e-5
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0.001, 0.25]}
+    - {start: 8, end: 90, lr: [0.25, 0], lr_mode: cos}
