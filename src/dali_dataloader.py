@@ -22,10 +22,6 @@ from pytorch_tools.utils.misc import env_rank, env_world_size, listify
 
 from src.arg_parser import LoaderConfig, StrictConfig, TrainLoaderConfig, ValLoaderConfig
 
-ROOT_DATA_DIR = "data/"  # images should be mounted or linked to data/ folder inside this repo
-ROOT_DATA_DIR = "/data/datasets/ImageNet/raw-data/"
-
-
 # values used for normalization. there is no reason to use Imagenet mean/std so i'm normalizing to [-5, 5]
 DATA_MEAN = (0.5 * 255, 0.5 * 255, 0.5 * 255)
 DATA_STD = (0.2 * 255, 0.2 * 255, 0.2 * 255)
@@ -44,7 +40,7 @@ def mix(condition, true_case, false_case):
 def train_pipeline(cfg: TrainLoaderConfig):
 
     jpeg, label = fn.readers.file(
-        file_root=ROOT_DATA_DIR + "/train/",
+        file_root=cfg.root_data_dir + "/train/",
         random_shuffle=True,
         shard_id=env_rank(),
         num_shards=env_world_size(),
@@ -115,7 +111,7 @@ def train_pipeline(cfg: TrainLoaderConfig):
 @pipeline_def
 def val_pipeline(cfg: ValLoaderConfig):
     jpeg, label = fn.readers.file(
-        file_root=ROOT_DATA_DIR + "/val/", shard_id=env_rank(), num_shards=env_world_size(), name="Reader",
+        file_root=cfg.root_data_dir + "/val/", shard_id=env_rank(), num_shards=env_world_size(), name="Reader",
     )
 
     image = fn.decoders.image(jpeg, device="mixed", output_type=types.RGB)
