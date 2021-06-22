@@ -5,6 +5,13 @@
 # gives Acc@1 77.438 Acc@5 93.658 on v0.1.4
 # Total time: 10h 41.7m (4 x V100)
 
+# on 21.06.21 with 1 GPU gives this. it's significantly lower, but probably due to smaller batch size and very strong overfit
+# [06-21 13:21:02] - Train loss: 1.6839 | Acc@1: 83.8419 | Acc@5: 94.6885
+# [06-21 13:21:02] - Val   loss: 1.8793 | Acc@1: 76.9500 | Acc@5: 93.1900
+# [06-21 13:21:02] - Model params: 25.56M
+# [06-21 13:21:02] - Acc@1 76.950 Acc@5 93.190
+# [06-21 13:21:02] - Total time: 42h 32.4m
+
 defaults:
   - /base@_here_
 
