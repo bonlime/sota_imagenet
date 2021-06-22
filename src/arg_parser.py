@@ -22,6 +22,7 @@ class LoaderConfig:
     # number of classes in dataset
     num_classes: int = 1000
     _is_train: bool = False
+    root_data_dir: str = "${env:IMAGENET_DIR}"
 
 
 @dataclass
