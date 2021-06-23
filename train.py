@@ -2,7 +2,6 @@ import os
 import sys
 import time
 import subprocess
-from pathlib import Path
 from loguru import logger
 
 import torch
@@ -27,10 +26,6 @@ def main(cfg: StrictConfig):
     cfg.distributed = cfg.world_size > 1
     # Only want master rank logging to tensorboard
     cfg.is_master = not cfg.distributed or cfg.local_rank == 0
-    # make sure it's Path. maybe can remove in later versions of Hydra when they would support not basic classes
-    cfg.loader.root_data_dir = Path(cfg.loader.root_data_dir)
-    cfg.val_loader.root_data_dir = Path(cfg.val_loader.root_data_dir)
-
 
     # save hashid and git diff for reproduceability. current dir is already in logs because of Hydra
     kwargs = {"universal_newlines": True, "stdout": subprocess.PIPE}
