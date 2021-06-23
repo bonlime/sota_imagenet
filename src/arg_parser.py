@@ -23,6 +23,7 @@ class LoaderConfig:
     num_classes: int = 1000
     _is_train: bool = False
     root_data_dir: str = "${env:IMAGENET_DIR}"
+    use_tfrecords: bool = False
 
 
 @dataclass
