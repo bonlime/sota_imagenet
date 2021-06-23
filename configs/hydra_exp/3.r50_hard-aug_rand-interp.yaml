@@ -1,0 +1,34 @@
+# @package _global_
+
+# close to exp1 but + random interpolation (to see how it affects performance)
+# for fair comparison will run using 1 GPU only
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  exp_name: r50_hard-aug_rand-interp
+
+# use larger weight decay because of label smoothing
+optim:
+  weight_decay: 3e-5
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+  random_interpolation: True
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0.001, 0.25]}
+    - {start: 8, end: 90, lr: [0.25, 0], lr_mode: cos}
