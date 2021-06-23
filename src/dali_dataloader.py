@@ -48,7 +48,9 @@ def train_pipeline(cfg: TrainLoaderConfig):
             "image/encoded": tfrec.FixedLenFeature((), tfrec.string, ""),
             "image/class/label": tfrec.FixedLenFeature([1], tfrec.int64, -1),
         }
-        inputs = fn.readers.tfrecord(path=records, index_path=indexes, features=features, **common_input_kwargs)
+        inputs = fn.readers.tfrecord( # initial fill large enough in include samples from many classes. read_ahead for speed
+            path=records, index_path=indexes, features=features, initial_fill=100000, read_ahead=True, **common_input_kwargs
+        )
         jpeg, label = inputs["image/encoded"], inputs["image/class/label"]
     else:
         jpeg, label = fn.readers.file(file_root=root_dir / "train", **common_input_kwargs)
@@ -125,7 +127,7 @@ def val_pipeline(cfg: ValLoaderConfig):
             "image/encoded": tfrec.FixedLenFeature((), tfrec.string, ""),
             "image/class/label": tfrec.FixedLenFeature([1], tfrec.int64, -1),
         }
-        inputs = fn.readers.tfrecord(path=records, index_path=indexes, features=features, **common_input_kwargs)
+        inputs = fn.readers.tfrecord(path=records, index_path=indexes, features=features, read_ahead=True, **common_input_kwargs)
         jpeg, label = inputs["image/encoded"], inputs["image/class/label"]
     else:
         jpeg, label = fn.readers.file(file_root=str(root_dir / "val"), **common_input_kwargs)
