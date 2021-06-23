@@ -101,8 +101,8 @@ def _process_folder(data_dir: Path, n_shards: int, synset_to_label: Dict[str, in
 
     out_name = data_dir.parent / (data_dir.name + "_records")
     out_index_name = data_dir.parent / (data_dir.name + "_indexes")
-    shutil.rmtree(out_name)
-    shutil.rmtree(out_index_name)
+    shutil.rmtree(out_name, ignore_errors=True)
+    shutil.rmtree(out_index_name, ignore_errors=True)
     out_name.mkdir(exist_ok=True)
     out_index_name.mkdir(exist_ok=True)
     tasks = []
