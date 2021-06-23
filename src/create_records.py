@@ -134,7 +134,7 @@ def main():
 
     sorted_synsets = sorted((args.root_data_dir / "train").iterdir())
     synset_to_label = {s.name: i for s, i in zip(sorted_synsets, range(len(sorted_synsets)))}
-    val_sorted_synsets = sorted((args.root_data_dir / "train").iterdir())
+    val_sorted_synsets = sorted((args.root_data_dir / "val").iterdir())
     val_synset_to_label = {s.name: i for s, i in zip(sorted_synsets, range(len(val_sorted_synsets)))}
     assert val_synset_to_label == synset_to_label, "Train and val dirs should contain the same number of classes"
 
