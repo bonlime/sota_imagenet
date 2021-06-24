@@ -17,10 +17,9 @@ serialized Example proto. The Example proto contains the following fields:
   image/encoded: string containing JPEG encoded image in RGB colorspace
   image/class/label: integer specifying the index in a classification layer. The label ranges from [1, 1000] where 0 is not used.
 
-Running this script using 16 threads may take around ~2.5 hours on a HP Z420.
+Running this script using 16 cores should take ~25 mins
 """
 
-from math import log
 import cv2
 import sys
 import shutil
@@ -34,6 +33,7 @@ from multiprocessing import Pool
 from configargparse import ArgumentParser
 
 logger.configure(handlers=[{"sink": sys.stdout, "format": "{time:[MM-DD HH:mm:ss]} - {message}"}])
+
 
 @dataclass
 class WorkerTask:
@@ -52,7 +52,7 @@ def get_args():
     p.add_argument("root_data_dir", type=Path, help="folder to process")
     p.add_argument("--train_shards", type=int, default=128, help="Number of shards in training TFRecord files")
     p.add_argument("--val_shards", type=int, default=16, help="Number of shards in validation TFRecord files")
-    p.add_argument("--skip_train", action='store_true', help="if given, only convert val images")
+    p.add_argument("--skip_train", action="store_true", help="if given, only convert val images")
 
     return p.parse_args()
 
@@ -65,22 +65,36 @@ def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
+def _is_broken(filename: Path) -> bool:
+    """Some images are CMYK, PNG instead of jpeg. For such images need to read and encode them again to avoid errors later
+    File list from: https://github.com/cytsai/ilsvrc-cmyk-image-list"""
+    # fmt: off
+    blacklist = [
+        'n01739381_1309', 'n02077923_14822', 'n02447366_23489', 'n02492035_15739', 'n02747177_10752', 'n03018349_4028', 
+        'n03062245_4620', 'n03347037_9675',  'n03467068_12171', 'n03529860_11437', 'n03544143_17228', 'n03633091_5218',
+        'n03710637_5125', 'n03961711_5286', 'n04033995_2932', 'n04258138_17003', 'n04264628_27969', 'n04336792_7448',
+        'n04371774_5854', 'n04596742_4225', 'n07583066_647', 'n13037406_4650', 'n02105855_2933'
+    ]
+    # fmt: on
+    return filename.stem in blacklist
+
+
 def _single_worker_func(task: WorkerTask):
     with tf.io.TFRecordWriter(str(task.out_name)) as writer:
         for filename in task.filenames:
-            label_feature = _int64_feature(task.synset_to_label[filename.parent.name])
-            img = cv2.imread(str(filename))
-            # saving with 95% compression. it is good enough, but images would be slightly different from original ones
-            # but the difference is unnoticeable by eye
-            _, img_bytes = cv2.imencode(".jpeg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            img_features = _bytes_feature(bytes(img_bytes))
-            filename_features = _bytes_feature(bytes(filename.name, "utf-8"))
+            if _is_broken(filename):
+                img = cv2.imread(str(filename))
+                # saving with 95% compression. it is good enough, but images would be slightly different from original ones
+                _, img_bytes = cv2.imencode(".jpeg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                img_bytes = bytes(img_bytes)
+            else:  # if images is not broken, skip decode. makes this script much faster
+                img_bytes = filename.open("rb").read()
             example = tf.train.Example(
                 features=tf.train.Features(
                     feature={
-                        "image/class/label": label_feature,
-                        "image/filename": filename_features,
-                        "image/encoded": img_features,
+                        "image/class/label": _int64_feature(task.synset_to_label[filename.parent.name]),
+                        "image/filename": _bytes_feature(bytes(filename.name, "utf-8")),
+                        "image/encoded": _bytes_feature(img_bytes),
                     }
                 )
             )
@@ -90,7 +104,6 @@ def _single_worker_func(task: WorkerTask):
     logger.info(f"Finished {task.out_name.stem}")
 
 
-
 def _process_folder(data_dir: Path, n_shards: int, synset_to_label: Dict[str, int]):
     filenames = sorted(data_dir.glob("*/*.JPEG"))
     num_images = len(filenames)
@@ -98,7 +111,6 @@ def _process_folder(data_dir: Path, n_shards: int, synset_to_label: Dict[str, in
     shard_ranges = [range(i * images_per_shard, (i + 1) * images_per_shard) for i in range(n_shards)]
     # make sure last images are put into last shard
     shard_ranges[-1] = range((n_shards - 1) * images_per_shard, num_images)
-
     out_name = data_dir.parent / (data_dir.name + "_records")
     out_index_name = data_dir.parent / (data_dir.name + "_indexes")
     shutil.rmtree(out_name, ignore_errors=True)
