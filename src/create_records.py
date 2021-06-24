@@ -23,6 +23,7 @@ Running this script using 16 cores should take ~25 mins
 import cv2
 import sys
 import shutil
+import random
 import subprocess
 import tensorflow as tf
 from pathlib import Path
@@ -33,7 +34,7 @@ from multiprocessing import Pool
 from configargparse import ArgumentParser
 
 logger.configure(handlers=[{"sink": sys.stdout, "format": "{time:[MM-DD HH:mm:ss]} - {message}"}])
-
+random.seed(42) # want deterministic shuffle for filenames
 
 @dataclass
 class WorkerTask:
@@ -106,6 +107,8 @@ def _single_worker_func(task: WorkerTask):
 
 def _process_folder(data_dir: Path, n_shards: int, synset_to_label: Dict[str, int]):
     filenames = sorted(data_dir.glob("*/*.JPEG"))
+    # DALI expects TFRecords to be pre-shuffled. do it once here, instead of doing it inside loaders
+    random.shuffle(filenames)
     num_images = len(filenames)
     images_per_shard = num_images // n_shards
     shard_ranges = [range(i * images_per_shard, (i + 1) * images_per_shard) for i in range(n_shards)]
