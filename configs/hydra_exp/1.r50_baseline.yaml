@@ -12,6 +12,10 @@
 # [06-21 13:21:02] - Acc@1 76.950 Acc@5 93.190
 # [06-21 13:21:02] - Total time: 42h 32.4m
 
+# works much better without filtering BN from wd. it look like it greatly helps to avoid overfit
+# [06-30 11:26:59] - Train loss: 1.8060 | Acc@1: 80.0996 | Acc@5: 93.2425
+# [06-30 11:26:59] - Val   loss: 1.8538 | Acc@1: 77.1380 | Acc@5: 93.5880
+
 defaults:
   - /base@_here_
 
