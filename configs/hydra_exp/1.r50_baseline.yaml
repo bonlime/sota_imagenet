@@ -27,6 +27,7 @@ log:
 
 # use larger weight decay because of label smoothing
 optim:
+  momentum: 0.9
   weight_decay: 3e-5
 
 # use label smoothing
