@@ -68,13 +68,13 @@ def main(cfg: StrictConfig):
 
     criterion = hydra.utils.call(cfg.criterion).cuda()
     # filter bn from weight decay by default
-    optimized_params = pt.utils.misc.filter_bn_from_wd(model)
+    opt_params = pt.utils.misc.filter_bn_from_wd(model) if cfg.filter_bn_wd else [{"params": list(model.parameters())}]
 
     # if criterion has it's own params, also optimize them
-    optimized_params[1]["params"].extend(list(criterion.parameters()))
+    opt_params[0]["params"].extend(list(criterion.parameters()))
 
     # start with 0 lr. Scheduler will change this later
-    optimizer = hydra.utils.call(cfg.optim, optimized_params)
+    optimizer = hydra.utils.call(cfg.optim, opt_params)
 
     # need to log number of parameters after creating criterion because it may change in the process
     # for example because of MLP layer
