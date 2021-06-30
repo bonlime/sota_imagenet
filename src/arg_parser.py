@@ -122,7 +122,7 @@ class StrictConfig:
 
     # by default using fused version of SGD because it's slightly faster
     optim: Dict[str, Any] = field(
-        default_factory=lambda: dict(_target_="torch.optim._multi_tensor.SGD", lr=0, weight_decay=1e-4, momentum=0.9)
+        default_factory=lambda: dict(_target_="torch.optim._multi_tensor.SGD", lr=0, weight_decay=1e-4)
     )
     # default loss is CCE
     criterion: Dict[str, Any] = field(
