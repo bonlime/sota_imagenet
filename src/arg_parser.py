@@ -138,6 +138,9 @@ class StrictConfig:
     # this arg should be set in your shell
     world_size: int = "${env:WORLD_SIZE}"
     local_rank: int = "${env:LOCAL_RANK}"
+    # sometimes it's usefull to overwrite master port to allow multiple distributed jobs on the same node
+    master_port: str = "${env:MASTER_PORT}"
+
     # this would be filled later in code
     distributed: bool = False
     is_master: bool = True

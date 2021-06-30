@@ -56,6 +56,7 @@ def main(cfg: StrictConfig):
 
     if cfg.distributed:
         logger.info("Distributed initializing process group")
+        os.environ["MASTER_PORT"] = cfg.master_port
         torch.cuda.set_device(cfg.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method="env://", world_size=cfg.world_size)
 
