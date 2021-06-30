@@ -39,6 +39,10 @@ class TrainLoaderConfig(LoaderConfig):
     gray_prob: float = 0
     # probability of applying brightness-contrast-hue-saturation augmentation
     color_twist_prob: float = 0
+    # 3 arg below are for color twist augmentation. the have no effect if `color_twist_prob` is 0
+    contrast_range: Tuple[float, float] = (0.7, 1.3)
+    brightness_range: Tuple[float, float] = (0.7, 1.3)
+
     # if True randomly use triangular / cubic interpolations for images. Works as a strong augmentation and makes model
     # very robust to interpolation method during inference
     random_interpolation: bool = False
@@ -138,8 +142,6 @@ class StrictConfig:
     # this arg should be set in your shell
     world_size: int = "${env:WORLD_SIZE}"
     local_rank: int = "${env:LOCAL_RANK}"
-    # sometimes it's usefull to overwrite master port to allow multiple distributed jobs on the same node
-    master_port: str = "${env:MASTER_PORT}"
 
     # this would be filled later in code
     distributed: bool = False
