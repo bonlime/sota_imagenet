@@ -30,5 +30,5 @@ loader:
 
 run:
   stages:
-    - {start: 0, end: 8, lr: [0.001, 0.25]}
-    - {start: 8, end: 90, lr: [0.25, 0], lr_mode: cos}
+    - {start: 0, end: 8, lr: [0.001, 1.0]}
+    - {start: 8, end: 90, lr: [1.0, 0], lr_mode: cos}
