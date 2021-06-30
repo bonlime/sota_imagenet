@@ -34,7 +34,8 @@ from multiprocessing import Pool
 from configargparse import ArgumentParser
 
 logger.configure(handlers=[{"sink": sys.stdout, "format": "{time:[MM-DD HH:mm:ss]} - {message}"}])
-random.seed(42) # want deterministic shuffle for filenames
+random.seed(42)  # want deterministic shuffle for filenames
+
 
 @dataclass
 class WorkerTask:
