@@ -67,6 +67,9 @@ def main(cfg: StrictConfig):
         model = pt.modules.weight_standartization.conv_to_ws_conv(model)
     model = model.cuda()
 
+    # default mom in PyTorch causes underperformance
+    pt.utils.misc.patch_bn_mom(model, 0.01)
+
     criterion = hydra.utils.call(cfg.criterion).cuda()
     # filter bn from weight decay by default
     opt_params = pt.utils.misc.filter_bn_from_wd(model) if cfg.filter_bn_wd else [{"params": list(model.parameters())}]
