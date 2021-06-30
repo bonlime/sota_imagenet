@@ -117,6 +117,9 @@ class StrictConfig:
     # flag to convert all convs to WS convs
     weight_standardization: bool = False
 
+    # flag to filter BN from wd. makes it much easier for model to overfit
+    filter_bn_wd: bool = False
+
     # by default using fused version of SGD because it's slightly faster
     optim: Dict[str, Any] = field(
         default_factory=lambda: dict(_target_="torch.optim._multi_tensor.SGD", lr=0, weight_decay=1e-4, momentum=0.9)
