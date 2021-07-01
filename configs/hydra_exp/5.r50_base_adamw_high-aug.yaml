@@ -1,0 +1,38 @@
+# @package _global_
+
+# config close to one in Nvidia/DeepLearning examples but with adamw
+
+# with SGD it should be Acc@1: 77.1380 | Acc@5: 93.5880
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  exp_name: r50_adamw_high-wd_high-aug
+
+# use larger weight decay because of label smoothing
+optim:
+  _target_: torch.optim._multi_tensor.AdamW
+  weight_decay: 5e-2
+  lr: 0
+
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+  random_interpolation: True
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0, 0.001]}
+    - {start: 8, end: 90, lr: [0.001, 0], lr_mode: cos}
