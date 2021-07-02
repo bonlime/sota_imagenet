@@ -1,5 +1,6 @@
 # Our project gitignores
 logs/
+old_logs/
 .vscode/
 data
 val_features
