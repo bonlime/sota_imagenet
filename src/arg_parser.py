@@ -103,6 +103,10 @@ class RunnerConfig:
 class LoggerConfig:
     exp_name: str = "test_run"
     dir: str = "logs"
+    # print model before training. usefull to validate that everything is correct
+    print_model: bool = False
+    # add histogram of weights to TB each epoch
+    histogram: bool = False
 
 
 # this 4 lines are an example of how to make some attributes a group. maybe usefull at some stage
@@ -123,6 +127,8 @@ class StrictConfig:
 
     # flag to filter BN from wd. makes it much easier for model to overfit
     filter_bn_wd: bool = False
+    bn_momentum: float = 0.1
+    init_gamma: Optional[float] = 1.72 # for swish
 
     # by default using fused version of SGD because it's slightly faster
     optim: Dict[str, Any] = field(
