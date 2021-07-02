@@ -1,0 +1,28 @@
+# @package _global_
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  exp_name: res18_test
+
+# use larger weight decay because of label smoothing
+optim:
+  momentum: 0.9
+  weight_decay: 3e-5
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0.001, 1.0]}
+    - {start: 8, end: 90, lr: [1.0, 0], lr_mode: cos}
