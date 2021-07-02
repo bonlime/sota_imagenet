@@ -10,6 +10,6 @@ defaults:
 # everything below would override experiments configs! so take care
 hydra:
   run:
-    dir: ${log.dir}/${log.exp_name}_${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: ${log.dir}/${now:%Y-%m-%d}_${log.exp_name}/${now:%H-%M-%S}
   # don't create subdir for yaml files
   output_subdir: .

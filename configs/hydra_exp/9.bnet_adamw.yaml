@@ -1,0 +1,86 @@
+# @package _global_
+
+# config close to old exp6 & exp8 
+# + adamw instead of novograd
+
+# updated run: 
+# + add init_gamma 1.72
+# + add WeightNorm callback
+# + change wd 0.1 -> 0.01 because i believe regularization is too strong
+
+defaults:
+  - /base@_here_
+
+log:
+  exp_name: cnet_adamw_norm
+  histogram: True
+
+model:
+  _target_: src.model.CModel
+  layer_config:
+    - [-1, 1, "pt.modules.SpaceToDepth", 2]
+    - [-1, 1, "conv3x3", [12, 32]]
+    - [-1, 1, "torch.nn.SiLU", [], {inplace: True}]
+    - [-1, 1, "pt.modules.BlurPool", 32]
+    - [-1, 1, "PreBasicBlock", [32, 128]]
+    - [-1, 1, "pt.modules.BlurPool", 128]
+    - [-1, 1, "PreBasicBlock", [128, 192]]
+    - [-1, 1, "PreBasicBlock", [192, 192]]
+    - [-1, 1, "pt.modules.BlurPool", 192]
+    - [-1, 1, "PreInvertedResidual", [192, 640]]
+    - [-1, 5, "PreInvertedResidual", [640, 640]]
+    - [-1, 1, "pt.modules.BlurPool", 640]
+    - [-1, 1, "PreInvertedResidual", [640, 1024]]
+    - [-1, 4, "PreInvertedResidual", [1024, 1024]]
+    - [-1, 1, "pt.modules.ABN", 1024, {activation: "'swish'"}]
+    - [-1, 1, "conv1x1", [1024, 2560]]
+    - [-1, 1, "pt.modules.ABN", 2560, {activation: "'swish'"}]
+    - [-1, 1, "pt.modules.FastGlobalAvgPool2d", [], {flatten: True}]
+    - [-1, 1, "nn.Linear", [2560, 1000]]
+  
+  extra_kwargs:
+    PreBasicBlock:
+      norm_act: "'swish_hard'"
+    PreInvertedResidual:
+      norm_act: "'swish_hard'"
+
+# use larger weight decay because of label smoothing
+optim:
+  _target_: torch.optim._multi_tensor.AdamW
+  # in PyTorch implementation weight decay is lr * wd, so 0.1 == 1e-4 as in AdamW paper
+  weight_decay: 0.01
+  lr: 0
+
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+  random_interpolation: True
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  # turn on random erasing
+  re_prob: 0.2
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0, 0.001]}
+    - {start: 8, end: 90, lr: [0.001, 0], lr_mode: cos}
+  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  ema_decay: 0.9993
+
+  extra_callbacks:
+    - _target_: pytorch_tools.fit_wrapper.callbacks.Cutmix
+      alpha: 1.0
+      # not needed really because now OHE is in loader, but needed for legacy reasons
+      num_classes: ${loader.num_classes}
+      prob: 0.5
+    - _target_: src.callbacks.WeightNorm
+      gamma: ${init_gamma} # for swish
+
+# updted params
+init_gamma: 1.4 # should be 1.72 for swish but model is not variance preserving so using lower value
