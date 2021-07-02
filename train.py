@@ -16,6 +16,7 @@ from omegaconf import OmegaConf
 
 from src.arg_parser import StrictConfig, DataStage
 from src.dali_dataloader import DaliDataManager
+from src.callbacks import WeightDistributionTB
 
 
 @hydra.main(config_path="./configs", config_name="base")
@@ -64,10 +65,18 @@ def main(cfg: StrictConfig):
 
     if cfg.weight_standardization:
         model = pt.modules.weight_standartization.conv_to_ws_conv(model)
+
+    # correctly initialize weights
+    if cfg.init_gamma is not None:
+        pt.utils.misc.initialize(model, cfg.init_gamma)
+
     model = model.cuda()
 
     # default mom in PyTorch causes underperformance
-    pt.utils.misc.patch_bn_mom(model, 0.01)
+    pt.utils.misc.patch_bn_mom(model, cfg.bn_momentum)
+
+    if cfg.log.print_model:
+        print(model)
 
     criterion = hydra.utils.call(cfg.criterion).cuda()
     # filter bn from weight decay by default
@@ -124,7 +133,13 @@ def main(cfg: StrictConfig):
     # here we can add any custom callback. MixUp / CutMix is also defined here
     callbacks += [hydra.utils.call(clb_cfg) for clb_cfg in cfg.run.extra_callbacks]
     if cfg.is_master:  # callback for master process
-        callbacks.extend([pt_clb.Timer(), pt_clb.ConsoleLogger(), pt_clb.TensorBoard(os.getcwd(), log_every=25)])
+        master_callbacks = [
+            pt_clb.Timer(),
+            pt_clb.ConsoleLogger(),
+            pt_clb.TensorBoard(os.getcwd(), log_every=50),
+            WeightDistributionTB() if cfg.log.histogram else NoClbk(),
+        ]
+        callbacks.extend(master_callbacks)
     runner = pt.fit_wrapper.Runner(
         model,
         optimizer,
