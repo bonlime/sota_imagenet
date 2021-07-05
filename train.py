@@ -108,7 +108,9 @@ def main(cfg: StrictConfig):
         model = DDP(model, device_ids=[cfg.local_rank])
 
     # current dir is already inside logs because of hydra
-    model_saver = pt_clb.CheckpointSaver(os.getcwd(), save_name="model.chpn") if cfg.is_master else NoClbk()
+    model_saver = NoClbk()
+    if cfg.is_master:
+        model_saver = pt_clb.CheckpointSaver(os.getcwd(), save_name="model.chpn", include_optimizer=cfg.log.save_optim)
 
     # nesting dataclasses in List is not currently supported. so do it manually
     cfg.run.stages = [DataStage(**stg) for stg in cfg.run.stages]
@@ -178,6 +180,8 @@ def main(cfg: StrictConfig):
         logger.info(f"Acc@1 {metrics['Acc@1'].avg:.3f} Acc@5 {metrics['Acc@5'].avg:.3f}")
         m = (time.time() - start_time) / 60
         logger.info(f"Total time: {int(m / 60)}h {m % 60:.1f}m")
+        # additionally save the final model
+        torch.save(model.state_dict(), "model_last.chpn")
 
 
 if __name__ == "__main__":

@@ -107,6 +107,8 @@ class LoggerConfig:
     print_model: bool = False
     # add histogram of weights to TB each epoch
     histogram: bool = False
+    # Flag to also save optimizer into save dict. makes it 2x times larger
+    save_optim: bool = False
 
 
 # this 4 lines are an example of how to make some attributes a group. maybe usefull at some stage
