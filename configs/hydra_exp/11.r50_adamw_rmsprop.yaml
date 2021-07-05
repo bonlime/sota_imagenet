@@ -1,0 +1,59 @@
+# @package _global_
+
+# config close to one in Nvidia/DeepLearning examples but with adamw
+
+# with SGD it should be Acc@1: 77.1380 | Acc@5: 93.5880
+
+# config close to rmsprop config of Rwigthman
+
+# upd. wd 0.005 -> 0.001 because it seems that regularization is too strong
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  # exp_name: r50_adamw_fixed-eps
+  exp_name: r50_adamw_rmsprop-like
+  histogram: True
+  save_optim: True # want to see what happens in optimizer close to the end
+
+
+
+# first run of this experiment
+# optim:
+#   _target_: torch.optim._multi_tensor.AdamW
+#   weight_decay: 5e-2
+#   lr: 0
+
+# use smaller weight decay because of label smoothing and increased lr
+optim:
+  _target_: pytorch_tools.optim.adamw.AdamW
+  # weight_decay: 0.005
+  weight_decay: 0.001
+  eps: 1e-3
+  lr: 0
+  # use_mom: True
+
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+
+# run:
+#   stages:
+#     - {start: 0, end: 8, lr: [0, 0.001]}
+#     - {start: 8, end: 90, lr: [0.001, 0], lr_mode: cos}
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0, 0.03]}
+    - {start: 8, end: 90, lr: [0.03, 0], lr_mode: cos}
+
+init_gamma: 1.7 # proper weight init

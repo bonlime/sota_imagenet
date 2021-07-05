@@ -1,0 +1,36 @@
+# @package _global_
+# using adamp with default values from the paper
+# + proper sq init
+# + eps inside sqrt 1e-8, close to high_wd experiment. want much lower adaptivity than in default adam
+# + lr 0.001 -> 0.01 due to much lower adaptivity
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  exp_name: r50_adamp
+  histogram: True
+  save_optim: True # want to see what happens in optimizer close to the end
+
+optim:
+  _target_: pytorch_tools.optim.adamp.AdamP
+  weight_decay: 1e-3 # wd * lr ~= 1e-5. this is upper bound, could be slightly lower
+  eps: 1e-8 # is inside sqrt so in reality it's 1e-4 (!)
+  lr: 0
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0, 0.01]}
+    - {start: 8, end: 90, lr: [0.01, 0], lr_mode: cos}
+
+init_gamma: 1.7 # proper weight init
