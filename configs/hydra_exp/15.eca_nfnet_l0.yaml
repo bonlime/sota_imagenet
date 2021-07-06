@@ -1,0 +1,54 @@
+# @package _global_
+
+# model from timm library, trained with my code
+# + no ema during first run for easier comparison with previous runs
+#   adding EMA is a low-hanging fruit so will do it later
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: timm.models.eca_nfnet_l0
+
+log:
+  exp_name: eca-nfnet-l0_first-attempt
+  histogram: True
+
+# using best found optimizer so far
+optim:
+  _target_: pytorch_tools.optim.adamw.AdamW
+  weight_decay: 1e-2
+  eps: 1e-6
+  lr: 0
+  use_mom: True
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0, 0.01]}
+    - {start: 8, end: 90, lr: [0.01, 0], lr_mode: cos}
+
+  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  # ema_decay: 0.9993
+  extra_callbacks:
+    - _target_: pytorch_tools.fit_wrapper.callbacks.Cutmix
+      alpha: 1.0
+      # not needed really because now OHE is in loader, but needed for legacy reasons
+      num_classes: 1000
+      prob: 0.5
+
+filter_bn_wd: True # would only filter weights bias, but still regularize gain!
+init_gamma: 1.7 # proper weight init
