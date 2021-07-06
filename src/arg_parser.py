@@ -130,7 +130,7 @@ class StrictConfig:
     # flag to filter BN from wd. makes it much easier for model to overfit
     filter_bn_wd: bool = False
     bn_momentum: float = 0.1
-    init_gamma: Optional[float] = 1.72 # for swish
+    init_gamma: Optional[float] = 1.72  # for swish
 
     # by default using fused version of SGD because it's slightly faster
     optim: Dict[str, Any] = field(
