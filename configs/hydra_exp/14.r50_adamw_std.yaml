@@ -1,0 +1,39 @@
+# @package _global_
+
+# close to last run of exp4
+# + backward weight standardization
+
+defaults:
+  - /base@_here_
+
+model:
+  _target_: pytorch_tools.models.resnet50
+
+log:
+  exp_name: r50_adamw_std
+  histogram: True
+
+optim:
+  _target_: pytorch_tools.optim.adamw.AdamW
+  weight_decay: 1e-2
+  eps: 1e-6
+  lr: 0
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 256
+
+run:
+  stages:
+    - {start: 0, end: 8, lr: [0, 0.01]}
+    - {start: 8, end: 90, lr: [0.01, 0], lr_mode: cos}
+
+  extra_callbacks:
+      - _target_: src.callbacks.WeightNorm
+        gamma: "${init_gamma}"
+        use_std: True
+
+init_gamma: 1.7 # proper weight init
