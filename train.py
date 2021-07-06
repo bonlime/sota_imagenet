@@ -26,7 +26,7 @@ def main(cfg: StrictConfig):
     # setup distributed args
     cfg.distributed = cfg.world_size > 1
     # Only want master rank logging to tensorboard
-    cfg.is_master = not cfg.distributed or cfg.local_rank == 0
+    cfg.is_master = cfg.local_rank == 0
 
     # save hashid and git diff for reproduceability. current dir is already in logs because of Hydra
     kwargs = {"universal_newlines": True, "stdout": subprocess.PIPE}
@@ -107,11 +107,6 @@ def main(cfg: StrictConfig):
     if cfg.distributed:
         model = DDP(model, device_ids=[cfg.local_rank])
 
-    # current dir is already inside logs because of hydra
-    model_saver = NoClbk()
-    if cfg.is_master:
-        model_saver = pt_clb.CheckpointSaver(os.getcwd(), save_name="model.chpn", include_optimizer=cfg.log.save_optim)
-
     # nesting dataclasses in List is not currently supported. so do it manually
     cfg.run.stages = [DataStage(**stg) for stg in cfg.run.stages]
     logger.info(cfg.run.stages)
@@ -129,19 +124,18 @@ def main(cfg: StrictConfig):
         pt_clb.BatchMetrics([pt.metrics.Accuracy(), pt.metrics.Accuracy(5)]),
         pt_clb.PhasesScheduler(lr_stages),
         pt_clb.FileLogger(),
-        model_saver,  # need to have CheckpointSaver before EMA so moving it here
+        # need to have CheckpointSaver before EMA so moving it here. current dir is already inside logs because of hydra
+        pt_clb.CheckpointSaver(os.getcwd(), save_name="model.chpn", include_optimizer=cfg.log.save_optim),
         ema_clb,  # ModelEMA MUST go after checkpoint saver to work, otherwise it would save main model instead of EMA
+        # callbacks below are only for master process. this is handled by `rank_zero_only` decorator
+        pt_clb.Timer(),
+        pt_clb.ConsoleLogger(),
+        pt_clb.TensorBoard(os.getcwd(), log_every=50),
+        WeightDistributionTB() if cfg.log.histogram else NoClbk(),
     ]
     # here we can add any custom callback. MixUp / CutMix is also defined here
     callbacks += [hydra.utils.call(clb_cfg) for clb_cfg in cfg.run.extra_callbacks]
-    if cfg.is_master:  # callback for master process
-        master_callbacks = [
-            pt_clb.Timer(),
-            pt_clb.ConsoleLogger(),
-            pt_clb.TensorBoard(os.getcwd(), log_every=50),
-            WeightDistributionTB() if cfg.log.histogram else NoClbk(),
-        ]
-        callbacks.extend(master_callbacks)
+
     runner = pt.fit_wrapper.Runner(
         model,
         optimizer,
@@ -174,13 +168,13 @@ def main(cfg: StrictConfig):
     # print number of params again for easier copy-paste
     logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
 
-    if cfg.is_master:
-        # metrics here are already reduced by runner. no need to anything additionally
-        metrics = runner.state.val_metrics
-        logger.info(f"Acc@1 {metrics['Acc@1'].avg:.3f} Acc@5 {metrics['Acc@5'].avg:.3f}")
-        m = (time.time() - start_time) / 60
-        logger.info(f"Total time: {int(m / 60)}h {m % 60:.1f}m")
-        # additionally save the final model
+    # metrics here are already reduced by runner. no need to anything additionally
+    metrics = runner.state.val_metrics
+    logger.info(f"Acc@1 {metrics['Acc@1'].avg:.3f} Acc@5 {metrics['Acc@5'].avg:.3f}")
+    m = (time.time() - start_time) / 60
+    logger.info(f"Total time: {int(m / 60)}h {m % 60:.1f}m")
+
+    if cfg.is_master:  # additionally save the final model
         torch.save(model.state_dict(), "model_last.chpn")
 
 

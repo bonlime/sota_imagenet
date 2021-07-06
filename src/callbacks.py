@@ -2,8 +2,10 @@ import torch
 
 import pytorch_tools as pt
 from pytorch_tools.fit_wrapper.callbacks import Callback
+from pytorch_tools.fit_wrapper.callbacks import rank_zero_only
 
 
+@rank_zero_only
 class WeightDistributionTB(Callback):
     """Plot weight distribution for each epoch to TB"""
 
