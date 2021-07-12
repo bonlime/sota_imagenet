@@ -1,13 +1,13 @@
 import torch
+import numpy as np
 from functools import partial
 
 import pytorch_tools as pt
-from pytorch_tools.fit_wrapper.callbacks import Callback
-from pytorch_tools.fit_wrapper.callbacks import rank_zero_only
+import pytorch_tools.fit_wrapper.callbacks as pt_clb
 
 
-@rank_zero_only
-class WeightDistributionTB(Callback):
+@pt_clb.rank_zero_only
+class WeightDistributionTB(pt_clb.Callback):
     """Plot weight distribution for each epoch to TB"""
 
     def on_epoch_begin(self):
@@ -15,7 +15,7 @@ class WeightDistributionTB(Callback):
             self.state.tb_logger.add_histogram(f"model/{n}", p.flatten(), self.state.global_sample_step)
 
 
-class ForwardWeightNorm(Callback):
+class ForwardWeightNorm(pt_clb.Callback):
     """Turn convs into StdConvs this is different from WeightNorm which implements the same idea but in backward mode
     `torch.nn.utils.parametrize` requires torch > 1.9.0
     """
@@ -40,7 +40,7 @@ class ForwardWeightNorm(Callback):
                 torch.nn.utils.parametrize.remove_parametrizations(m, "weight")
 
 
-class WeightNorm(Callback):
+class WeightNorm(pt_clb.Callback):
     """make sure weights are normalized during training.
     This implementation is different from the one in the literature and performs so called `backward scaled weight normalization`
     
@@ -66,3 +66,22 @@ class WeightNorm(Callback):
                     m.weight.data.copy_(pt.utils.misc.normalize_conv_weight(m.weight, gamma=self.gamma))
                 else:
                     pt.utils.misc.zero_mean_conv_weight(m.weight)  # it's inplace
+
+
+class CutmixMixup(pt_clb.Cutmix, pt_clb.Mixup):
+    """combines CutMix and Mixup and applyes one or another randomly"""
+    def __init__(self, cutmix_alpha, mixup_alpha, prob=0.5):
+        self.cutmix_tb = torch.distributions.Beta(cutmix_alpha, cutmix_alpha)
+        self.mixup_tb = torch.distributions.Beta(mixup_alpha, mixup_alpha)
+        self.aug_prob = prob
+        self.prob = 1 # want self.cutmix & self.mixup to always perform augmentation
+        self.prev_input = None
+
+    def on_batch_begin(self):
+        if self.state.is_train and np.random.rand() < self.aug_prob:
+            if np.random.rand() > 0.5:
+                self.tb = self.cutmix_tb
+                self.state.input = self.cutmix(*self.state.input)
+            else:
+                self.tb = self.mixup_tb
+                self.state.input = self.mixup(*self.state.input)

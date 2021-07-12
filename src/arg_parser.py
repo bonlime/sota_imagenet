@@ -128,7 +128,7 @@ class StrictConfig:
     weight_standardization: bool = False
 
     # flag to filter BN from wd. makes it much easier for model to overfit
-    filter_bn_wd: bool = False
+    filter_from_wd: Optional[List[str]] = None
     bn_momentum: float = 0.1
     init_gamma: Optional[float] = 1.72  # for swish
 

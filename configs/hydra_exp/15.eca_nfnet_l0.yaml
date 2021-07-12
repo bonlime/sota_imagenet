@@ -1,26 +1,54 @@
 # @package _global_
 
 # model from timm library, trained with my code
+# reference config: https://gist.github.com/rwightman/e69d5f456047c16773a77182cea68c3c
+# important notes:
+# * 656 epoch !!!!
+
 # + no ema during first run for easier comparison with previous runs
 #   adding EMA is a low-hanging fruit so will do it later
+
+# results of first run
+# Train loss: 2.2402 | Acc@1: 76.5925 | Acc@5: 91.3826
+# Val   loss: 1.8186 | Acc@1: 78.2540 | Acc@5: 94.0640
+# Model params: 24.14M
+
+# + drop_path 0.1
+# + dropout 0.2
+# + random erasing
+# + remove gain from wd
+# + 2x longer training
+# much better. still far from over-fitting
+# Train loss: 2.1416 | Acc@1: 78.5600 | Acc@5: 92.3714
+# Val   loss: 1.6938 | Acc@1: 80.4380 | Acc@5: 95.2300
+
+# run3
+# + wd 1e-4 -> 1e-5
+# + 4x longer training (360 epochs)
+# + ema 0.9997 (this is still much lower than 0.999975 for 4x GPUs which is 0.99995 for 2x GPUs)
+# + drop_path 0.1 -> 0.15
+# + random interpolation
+# + accumulate steps = 2 (instead of decreasing LR)
+# + resume from last checkpoint
 
 defaults:
   - /base@_here_
 
 model:
   _target_: timm.models.eca_nfnet_l0
+  drop_rate: 0.2 # dropout
+  drop_path_rate: 0.15
 
 log:
-  exp_name: eca-nfnet-l0_first-attempt
+  exp_name: eca-nfnet-l0_very-long_all-aug_resume
   histogram: True
 
 # using best found optimizer so far
 optim:
   _target_: pytorch_tools.optim.adamw.AdamW
-  weight_decay: 1e-2
+  weight_decay: 1e-3
   eps: 1e-6
   lr: 0
-  use_mom: True
 
 # use label smoothing
 criterion:
@@ -32,23 +60,37 @@ loader:
   blur_prob: 0.2
   gray_prob: 0.2
   color_twist_prob: 0.4
+  re_prob: 0.3
+  random_interpolation: True
 
 val_loader:
   image_size: 288 # to test on the same resolution as timm
 
 run:
+  resume: logs/2021-07-08_eca-nfnet-l0_long-more-aug/11-06/model.chpn
+
   stages:
-    - {start: 0, end: 8, lr: [0, 0.01]}
-    - {start: 8, end: 90, lr: [0.01, 0], lr_mode: cos}
+    - {start: 0, end: 5, lr: [0, 0.01]}
+    - {start: 5, end: 360, lr: [0.01, 0], lr_mode: cos}
 
-  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
-  # ema_decay: 0.9993
+  accumulate_steps: 2  
+  ema_decay: 0.9997 
   extra_callbacks:
-    - _target_: pytorch_tools.fit_wrapper.callbacks.Cutmix
-      alpha: 1.0
-      # not needed really because now OHE is in loader, but needed for legacy reasons
-      num_classes: 1000
-      prob: 0.5
+    - _target_: src.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1 # always perform mixup or cutmix
+      
+    # - _target_: pytorch_tools.fit_wrapper.callbacks.Cutmix
+    #   alpha: 1.0
+    #   # not needed really because now OHE is in loader, but needed for legacy reasons
+    #   num_classes: 1000
+    #   prob: 0.5
 
-filter_bn_wd: True # would only filter weights bias, but still regularize gain!
+    # not needed for rwightman model, because it uses StdConvs by default
+    # - _target_: src.callbacks.ForwardWeightNorm
+    #   gamma: "${init_gamma}"
+    #   use_std: True
+
+filter_from_wd: [gain] # filter bias and gain from wd
 init_gamma: 1.7 # proper weight init
