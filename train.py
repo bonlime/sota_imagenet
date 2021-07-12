@@ -79,8 +79,12 @@ def main(cfg: StrictConfig):
         print(model)
 
     criterion = hydra.utils.call(cfg.criterion).cuda()
-    # filter bn from weight decay by default
-    opt_params = pt.utils.misc.filter_bn_from_wd(model) if cfg.filter_bn_wd else [{"params": list(model.parameters())}]
+    # maybe filter bn | bias | something else from weight decay
+    if cfg.filter_from_wd is not None:
+        opt_params = pt.utils.misc.filter_from_weight_decay(model, skip_list=cfg.filter_from_wd)
+    else:
+        opt_params = [{"params": list(model.parameters())}]
+
 
     # if criterion has it's own params, also optimize them
     opt_params[0]["params"].extend(list(criterion.parameters()))
@@ -93,12 +97,15 @@ def main(cfg: StrictConfig):
     logger.info(f"Model params: {pt.utils.misc.count_parameters(model)[0]/1e6:.2f}M")
 
     if cfg.run.resume:
-        checkpoint = torch.load(cfg.run.resume, map_location=lambda storage, loc: storage.cuda(cfg.local_rank))
+        resume_path = hydra.utils.to_absolute_path(cfg.run.resume)
+        checkpoint = torch.load(resume_path, map_location=lambda storage, loc: storage.cuda(cfg.local_rank))
         model.load_state_dict(checkpoint["state_dict"], strict=False)
+        logger.info(f"Loader model checkpoint from {resume_path}")
         if cfg.run.load_start_epoch:
             cfg.run.start_epoch = checkpoint["epoch"]
         try:
             optimizer.load_state_dict(checkpoint["optimizer"])
+            logger.info("Loader optimizer state")
         except:  # may raise an error if another optimzer was used
             logger.info("Failed to load state dict into optimizer. It wasn't saved or optimizer has changed")
 
