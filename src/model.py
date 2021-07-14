@@ -20,6 +20,7 @@ from pytorch_tools.utils.misc import listify
 from pytorch_tools.modules.residual import conv1x1, conv3x3, DropConnect
 from pytorch_tools.modules import ABN
 from pytorch_tools.modules import activation_from_name
+from pytorch_tools.modules.residual import get_attn
 
 
 ## some blocks defintion
@@ -68,6 +69,10 @@ def scaled_conv3x3(in_chs, out_chs, **extra_kwargs):
     return ScaledStdConv2d(in_chs, out_chs, kernel_size=3, padding=1, bias=True, **extra_kwargs)
 
 
+def scaled_conv1x1(in_chs, out_chs, **extra_kwargs):
+    """3x3 convolution with padding"""
+    return ScaledStdConv2d(in_chs, out_chs, kernel_size=1, padding=0, bias=True, **extra_kwargs)
+
 class ChannelShuffle(nn.Module):
     """shuffles groups inside tensor. used to mix channels after grouped convolution. this is cheaper than using conv1x1
     Ref: ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices 
@@ -85,17 +90,19 @@ class ChannelShuffle(nn.Module):
         return f"groups={self.groups}"
 
 
-# class Affine(nn.Module):
-#     def __init__(self, value: float, trainable: bool = False):
-#         super().__init__()
-#         if trainable:
-#             self.register_parameter("value", torch.nn.Parameter(torch.tensor(value)))
-#         else:
-#             self.register_buffer("value", torch.tensor(value))
+class Affine(nn.Module):
+    def __init__(self, value: float, trainable: bool = False):
+        super().__init__()
+        if trainable:
+            self.register_parameter("value", torch.nn.Parameter(torch.tensor(value)))
+        else:
+            self.register_buffer("value", torch.tensor(value))
 
-#     def forward(self, x):
-#         return x * self.value
+    def forward(self, x):
+        return x * self.value
 
+    def extra_repr(self) -> str:
+        return f"value={self.value}"
 
 # instead of using skipinit gain or alpha we can simply init last conv gain with +-alpha no simplify
 class NormFreeBlock(nn.Module):
@@ -122,7 +129,8 @@ class NormFreeBlock(nn.Module):
         groups = in_chs // groups_width if groups_width else groups
         extra_kwargs = dict(groups=groups, gamma=gamma, n_heads=n_heads)
         layers = [
-            ("act1", activation_from_name(activation)),
+            # don't want to modify residual, so not in-place
+            ("act1", activation_from_name(activation, inplace=False)),
             ("conv1", scaled_conv3x3(in_chs, mid_chs, gain_init=beta, **extra_kwargs)),
             ("shuffle1", ChannelShuffle(groups) if groups > 1 else nn.Identity()),
             ("act2", activation_from_name(activation)),
@@ -140,6 +148,52 @@ class NormFreeBlock(nn.Module):
             out[:, : self.in_chs] += x
         return out
 
+class NormFreeBlockTimm(nn.Module):
+    """Close to default block of Timm but without downsampling support"""
+
+    def __init__(
+        self,
+        in_chs,
+        out_chs,
+        mid_chs=None,
+        groups=1,
+        groups_width=None,
+        activation="relu",
+        attention_type=None,
+        attention_gain=2.0,
+        keep_prob=1,
+        gamma=1.0,
+        beta=1.0,
+        alpha=0.2,
+    ):
+        super().__init__()
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+        mid_chs = mid_chs or out_chs
+        groups = mid_chs // groups_width if groups_width else groups
+        attn_layer = nn.Sequential(get_attn(attention_type)(mid_chs), Affine(attention_gain)) if attention_type else nn.Identity()
+        layers = [
+            # don't want to modify residual, so not in-place
+            ("act1", activation_from_name(activation, inplace=False)),
+            ("conv1", scaled_conv1x1(in_chs, mid_chs, gain_init=beta, gamma=gamma)),
+            ("act2", activation_from_name(activation)),
+            ("conv2", scaled_conv3x3(mid_chs, mid_chs, groups=groups, gamma=gamma)),
+            ("act2b", activation_from_name(activation)),
+            ("conv2b", scaled_conv3x3(mid_chs, mid_chs, groups=groups, gamma=gamma)),
+            ("act3", activation_from_name(activation)),
+            ("conv3", scaled_conv1x1(mid_chs, out_chs, gain_init=alpha, gamma=gamma)),
+            ("attn", attn_layer),
+            ("droppath", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+        ]
+        self.block = nn.Sequential(OrderedDict(layers))
+
+    def forward(self, x):
+        out = self.block(x)
+        if self.in_chs == self.out_chs:
+            out += x
+        else:
+            out[:, : self.in_chs] += x
+        return out
 
 class PreInvertedResidual(nn.Module):
     def __init__(
