@@ -1,47 +1,24 @@
 # @package _global_
 
-# very close to timm eca_nfnet_l0
-# the differences are:
-# + BlurPool instead of conv(s=2) for downsampling
-# + ECA kernel size = 9 (instead of 5)
-
-
-# run2.
-# forgot to add drop_path and drop_rate, so very strongly over-fitted
-# + drop_path_rate 0.15
-# + dropout rate 0.2
-# + cutmix/mixup prob 0.5 -> 1.0
+# like 18 but with my version of stem
+# results are much worse while this is not faster((
 
 defaults:
   - /base@_here_
-  
-log:
-  exp_name: nf_like-timm_dropout
-  histogram: True
 
 model:
   _target_: src.model.CModel
   extra_kwargs:
-    NormFreeBlockTimm:
-      activation: "'swish_hard'"
-      groups_width: 64
-      alpha: 0.2
-      gamma: "${init_gamma}"
-      attention_type: "'eca9'"
-      keep_prob: 0.85 # will set the same for each block and then patch to linearly increase
+    NormFreeBlockTimm: {activation: "'swish_hard'", groups_width: 64, alpha: 0.2, gamma: "${init_gamma}", attention_type: "'eca9'"}
     scaled_conv3x3: {gamma: "${init_gamma}"}
     torch.nn.SiLU: {inplace: True}
 
   layer_config:
-    # timm version of head. close to head in ResNet-D model
-    - [-1, 1, "scaled_conv3x3", [3, 16], {stride: 2}]
-    - [-1, 1, 'torch.nn.SiLU']
-    - [-1, 1, "scaled_conv3x3", [16, 32]]
-    - [-1, 1, 'torch.nn.SiLU']
-    - [-1, 1, "scaled_conv3x3", [32, 64]]
-    - [-1, 1, 'torch.nn.SiLU']
-    - [-1, 1, "scaled_conv3x3", [64, 128], {stride: 2}]
+    # my version of head
+    - [-1, 1, "pt.modules.SpaceToDepth", 2]
+    - [-1, 1, "scaled_conv3x3", [12, 128]] 
       # stage 1
+    - [-1, 1, "pt.modules.BlurPool", 128]
     - [-1, 1, "NormFreeBlockTimm", [128, 256, 64]]
       # stage 2
     - [-1, 1, "pt.modules.BlurPool", 256]
@@ -58,8 +35,11 @@ model:
     - [-1, 1, scaled_conv1x1, [1536, 2304], {gamma: "${init_gamma}"}]
     - [-1, 1, 'torch.nn.SiLU']
     - [-1, 1, "pt.modules.FastGlobalAvgPool2d", [], {flatten: True}]
-    - [-1, 1, "torch.nn.Dropout", [0.2]]
     - [-1, 1, "nn.Linear", [2304, 1000]]
+
+log:
+  exp_name: nf_like-timm
+  histogram: True
 
 # using best found optimizer so far
 optim:
@@ -92,7 +72,7 @@ run:
     - _target_: src.callbacks.CutmixMixup
       cutmix_alpha: 1.0
       mixup_alpha: 0.2
-      prob: 1.0
+      prob: 0.5
       
 filter_from_wd: [gain] # filter bias and gain from wd
 init_gamma: 2 # larger value to compensate for variance reduction after BlurPool
