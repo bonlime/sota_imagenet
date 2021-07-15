@@ -136,7 +136,7 @@ class NormFreeBlock(nn.Module):
             ("act2", activation_from_name(activation)),
             ("conv2", scaled_conv3x3(mid_chs, out_chs, gain_init=alpha, **extra_kwargs)),
             ("shuffle2", ChannelShuffle(groups) if groups > 1 else nn.Identity()),
-            ("droppath", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+            ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
         self.block = nn.Sequential(OrderedDict(layers))
 
@@ -165,6 +165,7 @@ class NormFreeBlockTimm(nn.Module):
         gamma=1.0,
         beta=1.0,
         alpha=0.2,
+        regnet_attention=False, # RegNet puts attention in bottleneck
     ):
         super().__init__()
         self.in_chs = in_chs
@@ -180,10 +181,11 @@ class NormFreeBlockTimm(nn.Module):
             ("conv2", scaled_conv3x3(mid_chs, mid_chs, groups=groups, gamma=gamma)),
             ("act2b", activation_from_name(activation)),
             ("conv2b", scaled_conv3x3(mid_chs, mid_chs, groups=groups, gamma=gamma)),
+            ("attn1", attn_layer if regnet_attention else nn.Identity()),
             ("act3", activation_from_name(activation)),
             ("conv3", scaled_conv1x1(mid_chs, out_chs, gain_init=alpha, gamma=gamma)),
-            ("attn", attn_layer),
-            ("droppath", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+            ("attn2", attn_layer if not regnet_attention else nn.Identity()),
+            ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
         self.block = nn.Sequential(OrderedDict(layers))
 
@@ -210,7 +212,7 @@ class PreInvertedResidual(nn.Module):
             ("conv_dw", conv3x3(mid_chs, mid_chs, groups=mid_chs)),
             ("bn3", norm_layer(mid_chs, activation=norm_act)),
             ("conv_pw2", conv1x1(mid_chs, out_chs)),
-            ("droppath", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+            ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
         self.block = nn.Sequential(OrderedDict(layers))
 
@@ -258,6 +260,18 @@ class CModel(nn.Module):
         layers, saved = self._parse_config(layer_config)
         self.layers: nn.Module = layers
         self.saved: List[int] = saved
+        self._patch_drop_path()
+
+    def _patch_drop_path(self, drop_path_name='drop_path'):
+        """DropPath works best when it linearly increased each block. Expects than drop_path layer is already created (by passing keep_prob"""
+        keep_probs = [m.keep_prob for n, m in self.layers.named_modules() if drop_path_name in n]
+        max_keep_prob = max(keep_probs)
+        num_drop_layers = len(keep_probs)
+        keep_prob_rates = torch.linspace(max_keep_prob, 1, num_drop_layers).numpy().tolist()
+        for n, m in self.layers.named_modules():
+            if drop_path_name in n:
+                m.keep_prob = keep_prob_rates.pop()
+        
 
     @staticmethod
     def _update_config_with_extra_params(layer_config: List[LayerDef], extra_kwargs: Dict[str, Dict]):
@@ -297,9 +311,6 @@ class CModel(nn.Module):
                 x = [x if j == -1 else saved_outputs[j] for j in layer.prev_l]
             elif layer.prev_l != -1:
                 x = saved_outputs[layer.prev_l]
-
-            # print('inp', [i.shape for i in listify(x)])
-            # print('saved', [i.shape for i in listify(saved_outputs) if i is not None])
 
             x = layer(x)
             saved_outputs.append(x if layer.idx in self.saved else None)
@@ -404,8 +415,8 @@ layer_config = [
 #     (-1, 1, 'nn.Linear', (2048, 1000)),
 
 
-model = CModel(layer_config).cuda()
-# print(model)
-inp = torch.rand(16, 3, 224, 224).cuda()
+# model = CModel(layer_config).cuda()
+# # print(model)
+# inp = torch.rand(16, 3, 224, 224).cuda()
 
-model(inp).shape
+# model(inp).shape
