@@ -76,7 +76,7 @@ def main(cfg: StrictConfig):
     pt.utils.misc.patch_bn_mom(model, cfg.bn_momentum)
 
     if cfg.log.print_model:
-        print(model)
+        logger.info(model)
 
     criterion = hydra.utils.call(cfg.criterion).cuda()
     # maybe filter bn | bias | something else from weight decay
