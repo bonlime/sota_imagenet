@@ -85,7 +85,6 @@ def main(cfg: StrictConfig):
     else:
         opt_params = [{"params": list(model.parameters())}]
 
-
     # if criterion has it's own params, also optimize them
     opt_params[0]["params"].extend(list(criterion.parameters()))
 

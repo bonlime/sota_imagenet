@@ -49,7 +49,11 @@ def train_pipeline(cfg: TrainLoaderConfig):
             "image/class/label": tfrec.FixedLenFeature([1], tfrec.int64, -1),
         }
         inputs = fn.readers.tfrecord(
-            path=records, index_path=indexes, features=features, read_ahead=True, **common_input_kwargs,
+            path=records,
+            index_path=indexes,
+            features=features,
+            read_ahead=True,
+            **common_input_kwargs,
         )
         jpeg, label = inputs["image/encoded"], inputs["image/class/label"]
     else:
@@ -161,7 +165,10 @@ class DaliLoader:
         pipe = pipeline(batch_size=cfg.batch_size, num_threads=cfg.workers, device_id=env_rank(), cfg=cfg)
         pipe.build()
         self.loader = DALIClassificationIterator(
-            pipe, reader_name="Reader", auto_reset=True, last_batch_policy=LastBatchPolicy.DROP,
+            pipe,
+            reader_name="Reader",
+            auto_reset=True,
+            last_batch_policy=LastBatchPolicy.DROP,
         )
 
     @property
