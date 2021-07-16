@@ -29,9 +29,9 @@ from pytorch_tools.modules.residual import get_attn
 class ScaledStdConv2d(nn.Conv2d):
     """Conv2d layer with Scaled Weight Standardization.
     Args:
-        gamma (float): 
+        gamma (float):
         gain_init (float):
-        eps (float): 
+        eps (float):
     Ref:
         [1] Characterizing signal propagation to close the performance gap in unnormalized ResNets (https://arxiv.org/abs/2101.08692)"""
 
@@ -73,9 +73,10 @@ def scaled_conv1x1(in_chs, out_chs, **extra_kwargs):
     """3x3 convolution with padding"""
     return ScaledStdConv2d(in_chs, out_chs, kernel_size=1, padding=0, bias=True, **extra_kwargs)
 
+
 class ChannelShuffle(nn.Module):
     """shuffles groups inside tensor. used to mix channels after grouped convolution. this is cheaper than using conv1x1
-    Ref: ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices 
+    Ref: ShuffleNet: An Extremely Efficient Convolutional Neural Network for Mobile Devices
     """
 
     def __init__(self, groups=1):
@@ -104,6 +105,7 @@ class Affine(nn.Module):
     def extra_repr(self) -> str:
         return f"value={self.value}"
 
+
 # instead of using skipinit gain or alpha we can simply init last conv gain with +-alpha no simplify
 class NormFreeBlock(nn.Module):
     """BasicBlock with preactivatoin & without downsample support"""
@@ -116,6 +118,9 @@ class NormFreeBlock(nn.Module):
         groups=1,
         groups_width=None,
         activation="relu",
+        attention_type=None,
+        attention_kwargs=None,  # pass something else to attention
+        attention_gain=2.0,
         keep_prob=1,
         gamma=1.0,
         beta=1.0,
@@ -128,6 +133,12 @@ class NormFreeBlock(nn.Module):
         mid_chs = mid_chs or out_chs
         groups = in_chs // groups_width if groups_width else groups
         extra_kwargs = dict(groups=groups, gamma=gamma, n_heads=n_heads)
+        attn_kw = attention_kwargs if attention_kwargs is not None else {}
+        attn_layer = (
+            nn.Sequential(get_attn(attention_type)(mid_chs, **attn_kw), Affine(attention_gain))
+            if attention_type
+            else nn.Identity()
+        )
         layers = [
             # don't want to modify residual, so not in-place
             ("act1", activation_from_name(activation, inplace=False)),
@@ -136,6 +147,7 @@ class NormFreeBlock(nn.Module):
             ("act2", activation_from_name(activation)),
             ("conv2", scaled_conv3x3(mid_chs, out_chs, gain_init=alpha, **extra_kwargs)),
             ("shuffle2", ChannelShuffle(groups) if groups > 1 else nn.Identity()),
+            ("attn", attn_layer),
             ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
         self.block = nn.Sequential(OrderedDict(layers))
@@ -147,6 +159,7 @@ class NormFreeBlock(nn.Module):
         else:
             out[:, : self.in_chs] += x
         return out
+
 
 class NormFreeBlockTimm(nn.Module):
     """Close to default block of Timm but without downsampling support"""
@@ -160,19 +173,25 @@ class NormFreeBlockTimm(nn.Module):
         groups_width=None,
         activation="relu",
         attention_type=None,
+        attention_kwargs=None,  # pass something else to attention
         attention_gain=2.0,
         keep_prob=1,
         gamma=1.0,
         beta=1.0,
         alpha=0.2,
-        regnet_attention=False, # RegNet puts attention in bottleneck
+        regnet_attention=False,  # RegNet puts attention in bottleneck
     ):
         super().__init__()
         self.in_chs = in_chs
         self.out_chs = out_chs
         mid_chs = mid_chs or out_chs
         groups = mid_chs // groups_width if groups_width else groups
-        attn_layer = nn.Sequential(get_attn(attention_type)(mid_chs), Affine(attention_gain)) if attention_type else nn.Identity()
+        attn_kw = attention_kwargs if attention_kwargs is not None else {}
+        attn_layer = (
+            nn.Sequential(get_attn(attention_type)(mid_chs, **attn_kw), Affine(attention_gain))
+            if attention_type
+            else nn.Identity()
+        )
         layers = [
             # don't want to modify residual, so not in-place
             ("act1", activation_from_name(activation, inplace=False)),
@@ -197,9 +216,16 @@ class NormFreeBlockTimm(nn.Module):
             out[:, : self.in_chs] += x
         return out
 
+
 class PreInvertedResidual(nn.Module):
     def __init__(
-        self, in_chs, out_chs, mid_chs=None, keep_prob=1, norm_layer=ABN, norm_act="relu",  # drop connect param
+        self,
+        in_chs,
+        out_chs,
+        mid_chs=None,
+        keep_prob=1,
+        norm_layer=ABN,
+        norm_act="relu",  # drop connect param
     ):
         super().__init__()
         self.in_chs = in_chs
@@ -250,7 +276,10 @@ class CModel(nn.Module):
     """
 
     def __init__(
-        self, layer_config: List[LayerDef], extra_kwargs: Dict[str, Dict] = None, features_idx: List[int] = None,
+        self,
+        layer_config: List[LayerDef],
+        extra_kwargs: Dict[str, Dict] = None,
+        features_idx: List[int] = None,
     ):
         super().__init__()
         if not isinstance(layer_config[0], LayerDef):
@@ -262,7 +291,7 @@ class CModel(nn.Module):
         self.saved: List[int] = saved
         self._patch_drop_path()
 
-    def _patch_drop_path(self, drop_path_name='drop_path'):
+    def _patch_drop_path(self, drop_path_name="drop_path"):
         """DropPath works best when it linearly increased each block. Expects than drop_path layer is already created (by passing keep_prob"""
         keep_probs = [m.keep_prob for n, m in self.layers.named_modules() if drop_path_name in n]
         max_keep_prob = max(keep_probs)
@@ -271,7 +300,6 @@ class CModel(nn.Module):
         for n, m in self.layers.named_modules():
             if drop_path_name in n:
                 m.keep_prob = keep_prob_rates.pop()
-        
 
     @staticmethod
     def _update_config_with_extra_params(layer_config: List[LayerDef], extra_kwargs: Dict[str, Dict]):
@@ -381,24 +409,24 @@ class CModel(nn.Module):
 # ]
 
 # like BNet
-layer_config = [
-    (-1, 1, "pt.modules.SpaceToDepth", 2),  # 0
-    (-1, 1, "conv3x3", (12, 64)),  # 0
-    (-1, 1, "pt.modules.BlurPool", 64),
-    (-1, 6, "pt.modules.residual.FusedRepVGGBlock", (64, 64)),
-    (-1, 1, "pt.modules.BlurPool", 64),
-    (-1, 1, "pt.modules.residual.FusedRepVGGBlock", (64, 128)),
-    (-1, 7, "pt.modules.residual.FusedRepVGGBlock", (128, 128)),
-    (-1, 1, "pt.modules.BlurPool", 128),
-    (-1, 1, "pt.modules.residual.FusedRepVGGBlock", (128, 256)),
-    (-1, 11, "pt.modules.residual.FusedRepVGGBlock", (256, 256)),
-    (-1, 1, "pt.modules.BlurPool", 256),
-    (-1, 1, "pt.modules.residual.FusedRepVGGBlock", (256, 512)),
-    (-1, 5, "pt.modules.residual.FusedRepVGGBlock", (512, 512)),
-    (-1, 1, "pt.modules.FastGlobalAvgPool2d", (), dict(flatten=True)),
-    (-1, 1, "nn.Dropout", (), dict(p=0, inplace=False)),
-    (-1, 1, "nn.Linear", (512, 1000)),
-]
+# layer_config = [
+#     (-1, 1, "pt.modules.SpaceToDepth", 2),  # 0
+#     (-1, 1, "conv3x3", (12, 64)),  # 0
+#     (-1, 1, "pt.modules.BlurPool", 64),
+#     (-1, 6, "pt.modules.residual.FusedRepVGGBlock", (64, 64)),
+#     (-1, 1, "pt.modules.BlurPool", 64),
+#     (-1, 1, "pt.modules.residual.FusedRepVGGBlock", (64, 128)),
+#     (-1, 7, "pt.modules.residual.FusedRepVGGBlock", (128, 128)),
+#     (-1, 1, "pt.modules.BlurPool", 128),
+#     (-1, 1, "pt.modules.residual.FusedRepVGGBlock", (128, 256)),
+#     (-1, 11, "pt.modules.residual.FusedRepVGGBlock", (256, 256)),
+#     (-1, 1, "pt.modules.BlurPool", 256),
+#     (-1, 1, "pt.modules.residual.FusedRepVGGBlock", (256, 512)),
+#     (-1, 5, "pt.modules.residual.FusedRepVGGBlock", (512, 512)),
+#     (-1, 1, "pt.modules.FastGlobalAvgPool2d", (), dict(flatten=True)),
+#     (-1, 1, "nn.Dropout", (), dict(p=0, inplace=False)),
+#     (-1, 1, "nn.Linear", (512, 1000)),
+# ]
 
 #     (-1, 1, 'ABN', 64, dict(activation="'relu'")),
 #     (-1, 1, 'torch.nn.MaxPool2d', (3, 2, 1)),

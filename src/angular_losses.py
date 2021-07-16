@@ -258,7 +258,7 @@ class AdaCos(nn.Module):
         margin (float): margin in radians
         max_s (float): maximum s. if not given may grow too large and five overflow
         momentum (float): momentum for running average of B and θ
-        arc_logits (bool): if true - add margin to arccosinus and pass negative arc to softmax 
+        arc_logits (bool): if true - add margin to arccosinus and pass negative arc to softmax
 
     Input:
         y_pred (torch.Tensor): shape BS x N_classes

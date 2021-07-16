@@ -43,12 +43,12 @@ class ForwardWeightNorm(pt_clb.Callback):
 class WeightNorm(pt_clb.Callback):
     """make sure weights are normalized during training.
     This implementation is different from the one in the literature and performs so called `backward scaled weight normalization`
-    
-    gamma: 
+
+    gamma:
         gain from nonlin. see NFNet paper for details
     skip_dw:
         flag to avoid normalizing dw convs because it limits their representation power significantly
-    
+
     NOTE: model should be initialized using kaiming init for this callback to work correctly
     """
 
@@ -70,11 +70,12 @@ class WeightNorm(pt_clb.Callback):
 
 class CutmixMixup(pt_clb.Cutmix, pt_clb.Mixup):
     """combines CutMix and Mixup and applyes one or another randomly"""
+
     def __init__(self, cutmix_alpha, mixup_alpha, prob=0.5):
         self.cutmix_tb = torch.distributions.Beta(cutmix_alpha, cutmix_alpha)
         self.mixup_tb = torch.distributions.Beta(mixup_alpha, mixup_alpha)
         self.aug_prob = prob
-        self.prob = 1 # want self.cutmix & self.mixup to always perform augmentation
+        self.prob = 1  # want self.cutmix & self.mixup to always perform augmentation
         self.prev_input = None
 
     def on_batch_begin(self):
