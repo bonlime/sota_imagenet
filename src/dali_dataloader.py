@@ -164,6 +164,10 @@ class DaliLoader:
             pipe, reader_name="Reader", auto_reset=True, last_batch_policy=LastBatchPolicy.DROP,
         )
 
+    @property
+    def batch_size(self):
+        return self.loader.batch_size
+
     def __len__(self):
         return math.ceil(self.loader._size / self.loader.batch_size)
 
