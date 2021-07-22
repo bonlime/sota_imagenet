@@ -90,7 +90,7 @@ def train_pipeline(cfg: TrainLoaderConfig):
         image = mix(fn.random.coin_flip(probability=cfg.color_twist_prob, dtype=types.BOOL), image_ct, image)
 
     if cfg.gray_prob > 0:
-        grayscale_coin = fn.cast(fn.random.coin_flip(probability=cfg.gray_prob), dtype=types.FLOAT)
+        grayscale_coin = fn.cast(fn.random.coin_flip(probability=1 - cfg.gray_prob), dtype=types.FLOAT)
         image = fn.hsv(image, device="gpu", saturation=grayscale_coin)
 
     if cfg.re_prob:  # random erasing
