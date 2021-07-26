@@ -5,10 +5,12 @@
 slightly larger, it also allows much greater flexibility than using separate class for each model
 """
 
+import random
 from copy import deepcopy
 from collections import OrderedDict
 from typing import List, Dict, Union
 from dataclasses import dataclass, field
+from pytorch_tools.modules.pooling import BlurPool
 
 
 import torch
@@ -17,10 +19,10 @@ import torch.nn.functional as F
 
 import pytorch_tools as pt
 from pytorch_tools.utils.misc import listify
-from pytorch_tools.modules.residual import conv1x1, conv3x3, DropConnect
+from pytorch_tools.modules.residual import XCA, conv1x1, conv3x3, DropConnect
 from pytorch_tools.modules import ABN
 from pytorch_tools.modules import activation_from_name
-from pytorch_tools.modules.residual import get_attn
+from pytorch_tools.modules.residual import get_attn, XCA
 
 
 ## some blocks defintion
@@ -106,7 +108,156 @@ class Affine(nn.Module):
         return f"value={self.value}"
 
 
-# instead of using skipinit gain or alpha we can simply init last conv gain with +-alpha no simplify
+class VarEMA(nn.Module):
+    """Normalize tensor var by EMA of running vars"""
+
+    # in first experiments it was 0.999 but it blew up
+    def __init__(self, decay=0.99, use=True):
+        super().__init__()
+        self.decay = decay
+        self.use = use
+        self.register_buffer("std_ema", torch.tensor(1.0))
+        self.register_buffer("mean_ema", torch.tensor(1.0))
+
+    def forward(self, x):
+        with torch.no_grad():
+            std, mean = torch.std_mean(x)
+            self.std_ema = self.decay * self.std_ema + (1 - self.decay) * std
+            self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
+        if self.use:
+            return x / self.std_ema
+        else:  # needed to monitor running variance during training without any changes to the network
+            return x
+
+class EMABlock(nn.Module):
+    """Use simple EMA normalization before each block to remove variance shift"""
+
+    def __init__(
+        self,
+        in_chs,
+        out_chs,
+        groups=1,
+        groups_width=None,
+        activation="relu",
+        conv_kwargs=None,
+        keep_prob=1,
+        remove_ema=False,
+        conv_act=False,
+    ):
+        super().__init__()
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+        groups = in_chs // groups_width if groups_width else groups
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
+        conv_kwargs["groups"] = groups
+        self.varema = nn.Identity() if remove_ema else VarEMA()
+        shuffle = ChannelShuffle(groups) if groups != 1 else nn.Identity()
+        if conv_act:
+            layers = [
+                ("conv1", scaled_conv3x3(in_chs, out_chs, **conv_kwargs)),
+                ("shuffle", shuffle)("act1", activation_from_name(activation, inplace=False)),
+                ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+            ]
+        else:
+            layers = [
+                ("act1", activation_from_name(activation, inplace=False)),
+                ("conv1", scaled_conv3x3(in_chs, out_chs, **conv_kwargs)),
+                ("shuffle", shuffle)("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+            ]
+        self.block = nn.Sequential(OrderedDict(layers))
+
+    def forward(self, x):
+        res = self.varema(x)
+        out = self.block(res)
+        if self.in_chs == self.out_chs:
+            out += res
+        else:
+            out[:, : self.in_chs] += res
+        return out
+
+
+class XCA_mod(nn.Module):
+    """ Cross-Covariance Attention (XCA)
+    Operation where the channels are updated using a weighted sum. The weights are obtained from the (softmax
+    normalized) Cross-covariance matrix (Q^T \\cdot K \\in d_h \\times d_h)
+    This could be viewed as dynamic 1x1 convolution
+    """
+
+    def __init__(self, dim, num_heads=8, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+        self.qkv = scaled_conv1x1(dim, dim * 3)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = scaled_conv1x1(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        # C` == channels per head, Hd == num heads
+        # B x C x H x W -> B x 3*C x H x W -> B x 3 x Hd x C` x H*W -> 3 x B x Hd x C` x H*W
+        qkv = self.qkv(x).reshape(B, 3, self.num_heads, C // self.num_heads, -1).transpose(0, 1)
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy
+        
+        # Paper section 3.2 l2-Normalization and temperature scaling
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+        # -> B x Hd x C` x C`
+        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        
+        # B x Hd x C` x C` @ B x Hd x C` x H*W -> B x C x H x W
+        x_out = (attn @ v).reshape(B, C, H, W)
+        x_out = self.proj(x_out)
+        x_out = self.proj_drop(x_out)
+        # in original paper there is no residual here 
+        return x + x_out
+    
+    def load_state_dict(self, state_dict):
+        # to allow loading from Linear layer
+        new_sd = {}
+        for k, v in state_dict.items():
+            if v.dim() == 2:
+                new_sd[k] = v[..., None, None]
+            else:
+                new_sd[k] = v
+        super().load_state_dict(new_sd)
+
+
+class ConvActBlock(nn.Module):
+    """conv + residual -> Act. allows fusing convolution with residual later"""
+
+    def __init__(
+        self, in_chs, out_chs, stride=1, groups=1, groups_width=None, activation="relu", conv_kwargs=None, attn_kwargs=None,
+    ):  # , keep_prob=1):
+        super().__init__()
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+        groups = max(in_chs // groups_width, 1) if groups_width else groups
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
+        conv_kwargs["groups"] = groups
+        self.res_downscale = BlurPool(in_chs) if stride == 2 else nn.Identity()
+        self.conv = scaled_conv3x3(in_chs, out_chs, stride=stride, **conv_kwargs)
+        self.shuffle = ChannelShuffle(groups) if groups != 1 else nn.Identity()
+        # maybe actually could use inplace here, it shouldn't matter
+        self.act = activation_from_name(activation, inplace=False)
+        self.attn = XCA_mod(dim=out_chs, **attn_kwargs) if attn_kwargs is not None else nn.Identity()
+
+
+    def forward(self, x):
+        out = self.shuffle(self.conv(x))
+        res = self.res_downscale(x)
+        if self.in_chs == self.out_chs:
+            out += res
+        else:
+            out[:, : self.in_chs] += res
+        out = self.act(out)
+        out = self.attn(out)
+        return out
+
+
+# instead of using skipinit gain or alpha we can simply init last conv gain with +-alpha to simplify
 class NormFreeBlock(nn.Module):
     """BasicBlock with preactivatoin & without downsample support"""
 
@@ -268,6 +419,35 @@ class Concat(nn.Module):
         return torch.cat(*args, dim=1)
 
 
+def update_dict(to_dict: Dict, from_dict: Dict) -> Dict:
+    """close to `to_dict.update(from_dict)` but correctly updates internal dicts"""
+    for k, v in from_dict.items():
+        if hasattr(v, "keys") and k in to_dict.keys():
+            to_dict[k].update(v)
+        else:
+            to_dict[k] = v
+    return to_dict
+
+def test_update_dict():
+    """Tests to make sure updating dict works as expected"""
+    # simple update
+    d_to = {'a': 10, 'b': 20}
+    d_from = {'a': 12, 'c': 30}
+    d_expected = {'a': 12, 'b': 20, 'c': 30}
+    assert update_dict(d_to, d_from) == d_expected
+
+    # recursive update. dict.update would fail in this case
+    d_to = {'foo': {'a': 10, 'b': 20}}
+    d_from = {'foo': {'a': 12, 'c': 30}}
+    d_expected = {'foo': {'a': 12, 'b': 20, 'c': 30}}
+    assert update_dict(d_to, d_from) == d_expected
+
+    # when key is not present in `to`
+    d_to = {'bar': 1}
+    d_from = {'foo': {'a': 12, 'c': 30}}
+    d_expected = {'bar': 1, 'foo': {'a': 12, 'c': 30}}
+    assert update_dict(d_to, d_from) == d_expected
+
 class CModel(nn.Module):
     """
     Args:
@@ -294,6 +474,8 @@ class CModel(nn.Module):
     def _patch_drop_path(self, drop_path_name="drop_path"):
         """DropPath works best when it linearly increased each block. Expects than drop_path layer is already created (by passing keep_prob"""
         keep_probs = [m.keep_prob for n, m in self.layers.named_modules() if drop_path_name in n]
+        if len(keep_probs) == 0:  # skip if no drop_path 
+            return
         max_keep_prob = max(keep_probs)
         num_drop_layers = len(keep_probs)
         keep_prob_rates = torch.linspace(max_keep_prob, 1, num_drop_layers).numpy().tolist()
@@ -307,9 +489,7 @@ class CModel(nn.Module):
             for l in layer_config:
                 if l.module == l_name:
                     # kwargs from layer should overwrite global extra_kwargs
-                    new_kwargs = deepcopy(l_kwargs)
-                    new_kwargs.update(**l.kwargs)
-                    l.kwargs = new_kwargs
+                    l.kwargs = update_dict(deepcopy(l_kwargs), l.kwargs)
 
     @staticmethod
     def _parse_config(layer_config: List[LayerDef]):
