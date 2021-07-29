@@ -1,9 +1,13 @@
 import torch
 import numpy as np
+from loguru import logger
 from functools import partial
 
 import pytorch_tools as pt
 import pytorch_tools.fit_wrapper.callbacks as pt_clb
+from torch._C import device
+from torch.nn.modules.conv import Conv2d
+
 
 
 @pt_clb.rank_zero_only
@@ -39,6 +43,22 @@ class ForwardWeightNorm(pt_clb.Callback):
             if torch.nn.utils.parametrize.is_parametrized(m):
                 torch.nn.utils.parametrize.remove_parametrizations(m, "weight")
 
+class ForwardSpectralNorm(pt_clb.Callback):
+    """Apply spectral norm to all convs `torch.nn.utils.parametrize` requires torch > 1.9.0"""
+
+    def on_begin(self):
+        logger.info("Adding spectral norm parametrization for weights")
+        # TODO: maybe add kaiming normal init here? or it shouldn't matter
+        for m in self.state.model.modules():
+            if isinstance(m, torch.nn.Conv2d):
+                torch.nn.utils.parametrizations.spectral_norm(m)
+
+    def on_end(self):
+        # remove parametrization. the weight's would be converted to parametrized version automatically
+        for m in self.state.model.modules():
+            if torch.nn.utils.parametrize.is_parametrized(m):
+                torch.nn.utils.parametrize.remove_parametrizations(m, "weight")
+
 
 class WeightNorm(pt_clb.Callback):
     """make sure weights are normalized during training.
@@ -67,6 +87,31 @@ class WeightNorm(pt_clb.Callback):
                 else:
                     pt.utils.misc.zero_mean_conv_weight(m.weight)  # it's inplace
 
+class OrthoLoss(pt.losses.Loss):
+    def __init__(self, model, eps=1e-2):
+        super().__init__()
+        self.model = model
+        self.eps = eps
+
+    def forward(self, *args):
+        loss = 0
+        for m in self.model.modules():
+            if isinstance(m, torch.nn.Conv2d):
+                mat = m.weight.view(m.weight.size(0), -1)
+                # avoid asking for impossible (finding orthonormal basis larger than space)
+                if mat.size(0) > mat.size(1):
+                    mat = mat.T
+                # in original implementation it's mat.T @ mat but I think it should be mat @ mat.T to show correlation between different filters
+                corr = mat @ mat.T / (mat.norm(dim=-1).pow(2) + self.eps) - torch.eye(mat.size(0), device=mat.device)
+                loss += corr.norm()
+        return loss
+
+class OrthoLossClb(pt_clb.Callback):
+    def __init__(self, weight=0.01):
+        self.weight = weight
+    
+    def on_begin(self):
+        self.state.criterion += OrthoLoss(self.state.model) * self.weight
 
 class CutmixMixup(pt_clb.Cutmix, pt_clb.Mixup):
     """combines CutMix and Mixup and applyes one or another randomly"""
@@ -74,15 +119,13 @@ class CutmixMixup(pt_clb.Cutmix, pt_clb.Mixup):
     def __init__(self, cutmix_alpha, mixup_alpha, prob=0.5):
         self.cutmix_tb = torch.distributions.Beta(cutmix_alpha, cutmix_alpha)
         self.mixup_tb = torch.distributions.Beta(mixup_alpha, mixup_alpha)
-        self.aug_prob = prob
-        self.prob = 1  # want self.cutmix & self.mixup to always perform augmentation
+        self.prob = prob 
         self.prev_input = None
 
     def on_batch_begin(self):
-        if self.state.is_train and np.random.rand() < self.aug_prob:
-            if np.random.rand() > 0.5:
-                self.tb = self.cutmix_tb
-                self.state.input = self.cutmix(*self.state.input)
-            else:
-                self.tb = self.mixup_tb
-                self.state.input = self.mixup(*self.state.input)
+        if np.random.rand() > 0.5:
+            self.tb = self.cutmix_tb
+            self.state.input = self.cutmix(*self.state.input)
+        else:
+            self.tb = self.mixup_tb
+            self.state.input = self.mixup(*self.state.input)
