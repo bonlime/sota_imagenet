@@ -75,6 +75,21 @@ def scaled_conv1x1(in_chs, out_chs, **extra_kwargs):
     """3x3 convolution with padding"""
     return ScaledStdConv2d(in_chs, out_chs, kernel_size=1, padding=0, bias=True, **extra_kwargs)
 
+def wrapped_conv1x1(in_chs, out_chs, gain_init=None, gamma=None, **extra_kwargs):
+    conv = conv1x1(in_chs, out_chs, **extra_kwargs)
+    gain_init = None
+    return conv if gain_init is None else nn.Sequential(conv, Affine(gain_init, trainable=True))
+
+def wrapped_conv3x3(in_chs, out_chs, gain_init=None, gamma=None, **extra_kwargs):
+    conv = conv3x3(in_chs, out_chs, **extra_kwargs)
+    gain_init = None
+    return conv if gain_init is None else nn.Sequential(conv, Affine(gain_init, trainable=True))
+
+# REMOVE_WN = True
+REMOVE_WN = False
+if REMOVE_WN:
+    scaled_conv1x1 = wrapped_conv1x1
+    scaled_conv3x3 = wrapped_conv3x3
 
 class ChannelShuffle(nn.Module):
     """shuffles groups inside tensor. used to mix channels after grouped convolution. this is cheaper than using conv1x1
@@ -92,10 +107,25 @@ class ChannelShuffle(nn.Module):
     def extra_repr(self):
         return f"groups={self.groups}"
 
+class ScaleNorm(nn.Module):
+    def __init__(self, eps=1e-5, trainable=True):
+        super().__init__()
+        if trainable:
+            self.register_parameter("scale", nn.Parameter(torch.ones(1)))
+        else:
+            self.scale = 1
+
+        self.eps = eps
+
+    def forward(self, x):
+        norm = self.scale / x.norm(dim=1, keepdim=True).clamp(min=self.eps)
+        return x * norm
+
 
 class Affine(nn.Module):
     def __init__(self, value: float, trainable: bool = False):
         super().__init__()
+        self.trainable = trainable
         if trainable:
             self.register_parameter("value", torch.nn.Parameter(torch.tensor(value)))
         else:
@@ -105,7 +135,7 @@ class Affine(nn.Module):
         return x * self.value
 
     def extra_repr(self) -> str:
-        return f"value={self.value}"
+        return f"value={self.value}, trainable={self.trainable}"
 
 
 class VarEMA(nn.Module):
@@ -155,14 +185,16 @@ class EMABlock(nn.Module):
         if conv_act:
             layers = [
                 ("conv1", scaled_conv3x3(in_chs, out_chs, **conv_kwargs)),
-                ("shuffle", shuffle)("act1", activation_from_name(activation, inplace=False)),
+                ("shuffle", shuffle),
+                ("act1", activation_from_name(activation, inplace=False)),
                 ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
             ]
         else:
             layers = [
                 ("act1", activation_from_name(activation, inplace=False)),
                 ("conv1", scaled_conv3x3(in_chs, out_chs, **conv_kwargs)),
-                ("shuffle", shuffle)("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
+                ("shuffle", shuffle),
+                ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
             ]
         self.block = nn.Sequential(OrderedDict(layers))
 
