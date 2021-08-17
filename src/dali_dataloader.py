@@ -25,7 +25,11 @@ from src.arg_parser import LoaderConfig, StrictConfig, TrainLoaderConfig, ValLoa
 
 # values used for normalization. there is no reason to use Imagenet mean/std so i'm normalizing to [-5, 5]
 DATA_MEAN = (0.5 * 255, 0.5 * 255, 0.5 * 255)
+
 DATA_STD = (0.2 * 255, 0.2 * 255, 0.2 * 255)
+# let's check how it affects performance
+# DATA_STD = (0.02 * 255, 0.02 * 255, 0.02 * 255)
+
 
 # DATA_MEAN = (0.485 * 255, 0.456 * 255, 0.406 * 255)
 # DATA_STD = (0.229 * 255, 0.224 * 255, 0.225 * 255)

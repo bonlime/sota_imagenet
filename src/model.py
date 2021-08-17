@@ -37,25 +37,35 @@ class ScaledStdConv2d(nn.Conv2d):
     Ref:
         [1] Characterizing signal propagation to close the performance gap in unnormalized ResNets (https://arxiv.org/abs/2101.08692)"""
 
-    def __init__(self, in_chs, out_chs, *args, gamma=1.0, gain_init=1.0, eps=1e-6, n_heads=1, **kwargs):
+    def __init__(self, in_chs, out_chs, *args, gamma=1.0, gain_init=1.0, eps=1e-6, n_heads=1, single_gain=False, norm=False, **kwargs):
         out_chs *= n_heads
         super().__init__(in_chs, out_chs, *args, **kwargs)
-        self.gain = nn.Parameter(torch.full((self.out_channels, 1, 1, 1), float(gain_init)))
+        # if single_gain:
+            # self.gain = nn.Parameter(torch.tensor(gain_init))
+        # else:
         self.scale = gamma * self.weight[0].numel() ** -0.5  # gamma * 1 / sqrt(fan-in)
+        self.gain = nn.Parameter(torch.full((self.out_channels, 1, 1, 1), float(gain_init))) 
         self.gamma = gamma
         self.eps = eps
         self.n_heads = n_heads
+        self.norm = norm # if True performs weight normalizatin instead of weight standardization
 
     def forward(self, x):
-        weight = F.batch_norm(
-            self.weight.view(1, self.out_channels, -1),
-            None,
-            None,
-            weight=(self.gain * self.scale).view(-1),
-            training=True,
-            momentum=0.0,
-            eps=self.eps,
-        ).reshape_as(self.weight)
+        if self.norm:
+            weight = pt.utils.misc.zero_mean_conv_weight(self.weight)
+            weight = weight / (weight.view(weight.size(0), -1).norm(dim=-1) + self.eps)[:, None, None, None]
+            weight = weight * self.gain * self.scale
+        else:
+            weight = F.batch_norm(
+                self.weight.view(1, self.out_channels, -1),
+                None,
+                None,
+                weight=(self.gain * self.scale).view(-1),
+                # weight=self.gain.view(-1), # gain is multiplied by scale during init
+                training=True,
+                momentum=0.0,
+                eps=self.eps,
+            ).reshape_as(self.weight)
         proj = F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
         if self.n_heads != 1:
             proj = proj.view(proj.size(0), self.n_heads, proj.size(1) // self.n_heads, proj.size(2), proj.size(3))
@@ -77,15 +87,19 @@ def scaled_conv1x1(in_chs, out_chs, **extra_kwargs):
 
 def wrapped_conv1x1(in_chs, out_chs, gain_init=None, gamma=None, **extra_kwargs):
     conv = conv1x1(in_chs, out_chs, **extra_kwargs)
-    gain_init = None
-    return conv if gain_init is None else nn.Sequential(conv, Affine(gain_init, trainable=True))
+    if gamma is None:
+        return conv
+    else:
+        return nn.Sequential(OrderedDict([('conv', conv), ('gain', Gain(out_chs))]))
 
 def wrapped_conv3x3(in_chs, out_chs, gain_init=None, gamma=None, **extra_kwargs):
     conv = conv3x3(in_chs, out_chs, **extra_kwargs)
-    gain_init = None
-    return conv if gain_init is None else nn.Sequential(conv, Affine(gain_init, trainable=True))
+    if gamma is None:
+        return conv
+    else:   
+        return nn.Sequential(OrderedDict([('conv', conv), ('gain', Gain(out_chs))]))
 
-# REMOVE_WN = True
+REMOVE_WN = True
 REMOVE_WN = False
 if REMOVE_WN:
     scaled_conv1x1 = wrapped_conv1x1
@@ -137,15 +151,27 @@ class Affine(nn.Module):
     def extra_repr(self) -> str:
         return f"value={self.value}, trainable={self.trainable}"
 
+class Gain(nn.Module):
+    def __init__(self, size: float):
+        super().__init__()
+        self.register_parameter("gain", torch.nn.Parameter(torch.ones(1, size, 1, 1)))
+        self.size = size
+
+    def forward(self, x):
+        return x * self.gain
+    
+    def extra_repr(self) -> str:
+        return f"{self.size}"
 
 class VarEMA(nn.Module):
     """Normalize tensor var by EMA of running vars"""
 
     # in first experiments it was 0.999 but it blew up
-    def __init__(self, decay=0.99, use=True):
+    def __init__(self, decay=0.99, use=True, per_channel=False):
         super().__init__()
         self.decay = decay
         self.use = use
+        self.per_channel = per_channel
         self.register_buffer("std_ema", torch.tensor(1.0))
         self.register_buffer("mean_ema", torch.tensor(1.0))
 
@@ -359,7 +385,7 @@ class NormFreeBlockTimm(nn.Module):
         attention_kwargs=None,  # pass something else to attention
         attention_gain=2.0,
         keep_prob=1,
-        gamma=1.0,
+        conv_kwargs=None,
         beta=1.0,
         alpha=0.2,
         regnet_attention=False,  # RegNet puts attention in bottleneck
@@ -368,6 +394,7 @@ class NormFreeBlockTimm(nn.Module):
         self.in_chs = in_chs
         self.out_chs = out_chs
         mid_chs = mid_chs or out_chs
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
         groups = mid_chs // groups_width if groups_width else groups
         attn_kw = attention_kwargs if attention_kwargs is not None else {}
         attn_layer = (
@@ -378,14 +405,14 @@ class NormFreeBlockTimm(nn.Module):
         layers = [
             # don't want to modify residual, so not in-place
             ("act1", activation_from_name(activation, inplace=False)),
-            ("conv1", scaled_conv1x1(in_chs, mid_chs, gain_init=beta, gamma=gamma)),
+            ("conv1", scaled_conv1x1(in_chs, mid_chs, gain_init=beta, **conv_kwargs)),
             ("act2", activation_from_name(activation)),
-            ("conv2", scaled_conv3x3(mid_chs, mid_chs, groups=groups, gamma=gamma)),
+            ("conv2", scaled_conv3x3(mid_chs, mid_chs, groups=groups, **conv_kwargs)),
             ("act2b", activation_from_name(activation)),
-            ("conv2b", scaled_conv3x3(mid_chs, mid_chs, groups=groups, gamma=gamma)),
+            ("conv2b", scaled_conv3x3(mid_chs, mid_chs, groups=groups, **conv_kwargs)),
             ("attn1", attn_layer if regnet_attention else nn.Identity()),
             ("act3", activation_from_name(activation)),
-            ("conv3", scaled_conv1x1(mid_chs, out_chs, gain_init=alpha, gamma=gamma)),
+            ("conv3", scaled_conv1x1(mid_chs, out_chs, gain_init=alpha, **conv_kwargs)),
             ("attn2", attn_layer if not regnet_attention else nn.Identity()),
             ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
