@@ -3,11 +3,19 @@
 # exp24 + loss to make filters orthogonal 
 
 # run2 fix bug with asking ortho basis larger than space
+# works as bad as before
+
+# run3 remove ortho norm when increasing number of channels
+# run4 remove ortho norm for first layers in the network (where num filters < 384)
+
+# run5 on 06.08.21:
+# rewrite OrthoLoss closer to the paper
+
 defaults:
   - /base@_here_
   
 log:
-  exp_name: nf_conv-act_ortho_fix
+  exp_name: nf_conv-act_ortho-fix2_1e-4_badam
   histogram: True
   print_model: True
 
@@ -69,7 +77,7 @@ model:
 
 # using best found optimizer so far
 optim:
-  _target_: pytorch_tools.optim.adamw.AdamW
+  _target_: badam.BAdam
   weight_decay: 5e-3
   eps: 1e-6
   lr: 0
@@ -101,7 +109,7 @@ run:
       prob: 1.0
     # add extra loss for better orhogonality of weights
     - _target_: src.callbacks.OrthoLossClb
-      weight: 0.001
+      weight: 0.0001
       
 filter_from_wd: [gain] # filter bias and gain from wd
 init_gamma: 2 # larger value to compensate for variance reduction after BlurPool

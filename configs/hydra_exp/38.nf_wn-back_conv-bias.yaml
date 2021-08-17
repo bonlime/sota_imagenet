@@ -1,37 +1,12 @@
 # @package _global_
 
-# close to exp24 but using SpectralNorm instead of weight normalization
-# DON'T FORGET to set REMOVE_WN in model.py to False
+# nfnet like with learnable gain and backward centered weight normalization
 
-# run1 - does converge but slowly
-
-# run2 - remove gain_init kwarg from everywhere to remove Affine layer
-# upd. this leads to much worse model performance
-
-# 05.08.21 return to this experiments
-# run1 - repeat previous results
-# run2 - change input normalization from [-5, 5] to [-50, 50] to check the performance
-# run3 - run2 + norm loss weight decay
-# run4 - run2 without weight decay
-# all runs above work almost the same as run1, changing norm to [-50, 50] gives minor boost
-
-# run5 - spectral + ortho loss (v1)
-# run6 - spectral + ortho loss (v2)
-
-# run7 - spectral + temperature 0.1 in loss
-# run8 - spectral + temp 0.1 + ortho loss v1
-
-# run9 - spectral + ortho loss v1 + orho init
-# run10 - ortho lossv1 + ortho init (without spectral)
-# run11 - spectral + ortho loss v1 + ortho init (min_norm=0 to preserve orthogonality) + gain in init == 2
-# run12 - spectral + ortho loss v1 + ortho init (min_norm=0) + gain in init == 2 + trainable gain in each conv layer 
-
-# run13 - back to spectral + affine but this time affine for each filter
 defaults:
   - /base@_here_
   
 log:
-  exp_name: nf_spectral_affine-each-f
+  exp_name: nf_WN-back_bias
   histogram: True
   print_model: True
 
@@ -41,25 +16,28 @@ model:
     ConvActBlock:
       activation: "'swish_hard'"
       conv_kwargs:
-        gamma: True
+        gamma: "${init_gamma}"
+        gain_init: 0.1
+        bias: True
     NormFreeBlockTimm:
-      gamma: True
       activation: "'swish_hard'"
       groups_width: 64
       alpha: 0.2
+      gamma: "${init_gamma}"
       attention_type: "'eca9'"
       keep_prob: 0.85 # will set the same for each block and then patch to linearly increase
       regnet_attention: True
     VarEMA:
       use: False
+    scaled_conv3x3: {gamma: "${init_gamma}"}
     torch.nn.SiLU: {inplace: True}
 
   layer_config:
     # residual starts from the very firt layer. 
     # larger gain during first channel increase for faster convergence during training
-    - [-1, 1, ConvActBlock, [3, 16], {stride: 2}] # {conv_kwargs: {gain_init: 0.5}}
-    - [-1, 1, ConvActBlock, [16, 32]] # {conv_kwargs: {gain_init: 0.5}}
-    - [-1, 1, ConvActBlock, [32, 64]] # {conv_kwargs: {gain_init: 0.5}}
+    - [-1, 1, ConvActBlock, [3, 16], {stride: 2, conv_kwargs: {gain_init: 1.0}}]
+    - [-1, 1, ConvActBlock, [16, 32], {conv_kwargs: {gain_init: 0.5}}]
+    - [-1, 1, ConvActBlock, [32, 64], {conv_kwargs: {gain_init: 0.5}}]
     - [-1, 1, VarEMA]
     - [-1, 1, ConvActBlock, [64, 64], {stride: 2}]
     - [-1, 1, VarEMA]
@@ -89,27 +67,35 @@ model:
     - [-1, 1, "nn.Linear", [2304, 1000]]
 
 # using best found optimizer so far
+# optim:
+#   _target_: pytorch_tools.optim.adamw.AdamW
+#   weight_decay: 5e-3
+#   eps: 1e-6
+#   lr: 0
+
 optim:
   _target_: badam.BAdam
-  weight_decay: 0 # 5e-3
+  weight_decay: 0 # no weight decay because weights are unit normalized anyway
   eps: 1e-6
   lr: 0
-  # wd_type: norm_loss
 
 # use label smoothing
 criterion:
   smoothing: 0.1
+  # added later
   # temperature: 0.1
 
 loader:
   image_size: 224
-  batch_size: 224
+  # using 196 instead of 224 in previous experiments to avoid OOM due to gain
+  batch_size: 128
   blur_prob: 0.2
   gray_prob: 0.2
   color_twist_prob: 0.4
   re_prob: 0.3
 
 val_loader:
+  batch_size: 125
   image_size: 288 # to test on the same resolution as timm
 
 run:
@@ -122,17 +108,16 @@ run:
       cutmix_alpha: 1.0
       mixup_alpha: 0.2
       prob: 1.0
-    # make sure ortho init is ahead of SpectralNorm
+    # initialize from orthogonal group
     - _target_: src.callbacks.OrthoInitClb
-      # no gain in callback, it's moved to trainable gain
-      # gain: 2 # slightly larger gain
-    - _target_: src.callbacks.ForwardSpectralNorm
-    - _target_: src.callbacks.OrthoLossClb
-      type: 1
-      weight: 0.001
-      min_filters: 64
-      min_norm: 0
-      
+    # apply weight Norm 
+    - _target_: src.callbacks.WeightNorm
 
+    # - _target_: src.callbacks.OrthoLossClb
+    #   type: 1
+    #   weight: 0.001
+    #   min_filters: 64
+    #   min_norm: 0.1
+      
 filter_from_wd: [gain] # filter bias and gain from wd
 init_gamma: 2 # larger value to compensate for variance reduction after BlurPool
