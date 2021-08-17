@@ -5,11 +5,16 @@
 # run 3. regnet_attention
 # + regnet_attention in last 2 stages. want to check how much it affects performance
 
+# on 09.08.21
+# adjust temperature to check how it affects 
+# + temperature: 0.1 in loss
+
+# run with ortho init
 defaults:
   - /base@_here_
   
 log:
-  exp_name: nf-repvgg_fix-shuffle_stats_regnet-attn
+  exp_name: nf-conv-act_temp
   histogram: True
   print_model: True
 
@@ -70,8 +75,14 @@ model:
     - [-1, 1, "nn.Linear", [2304, 1000]]
 
 # using best found optimizer so far
+# optim:
+#   _target_: pytorch_tools.optim.adamw.AdamW
+#   weight_decay: 5e-3
+#   eps: 1e-6
+#   lr: 0
+
 optim:
-  _target_: pytorch_tools.optim.adamw.AdamW
+  _target_: badam.BAdam
   weight_decay: 5e-3
   eps: 1e-6
   lr: 0
@@ -79,6 +90,8 @@ optim:
 # use label smoothing
 criterion:
   smoothing: 0.1
+  # added later
+  # temperature: 0.1
 
 loader:
   image_size: 224
@@ -101,6 +114,13 @@ run:
       cutmix_alpha: 1.0
       mixup_alpha: 0.2
       prob: 1.0
+
+    - _target_: src.callbacks.OrthoInitClb
+    - _target_: src.callbacks.OrthoLossClb
+      type: 1
+      weight: 0.001
+      min_filters: 64
+      min_norm: 0.1
       
 filter_from_wd: [gain] # filter bias and gain from wd
 init_gamma: 2 # larger value to compensate for variance reduction after BlurPool
