@@ -1,18 +1,18 @@
 # @package _global_
 
-# default + projection as in adamp paper
-# run2: 17.08.21 - turn everything off. check that current code works as before
-# repeat experiment gives same accuracy as before. good news
+# attempts to get rid of NFNetTimm block (again). 
+# in stage3 NormFreeBlockTimm -> NormFreeBlock (ChunnelShuffle instead of conv1x1)
+# + very small alpha (1e-3) ~= SkipInit
+# + GroupNorm pre-norm in each layer
+# upd. explodes ((( probably because need much larger number of groups? changed 4 -> 16
 
-# run3. adaptive epsilon in BAdam
 defaults:
   - /base@_here_
   
 log:
-  exp_name: nf-conv-act_repeat4_adap-eps # badamp
-  # turn off for now
-  # histogram: True
-  # print_model: True
+  exp_name: nf-conv-act_stage3_low-gamma_GN
+  histogram: True
+  print_model: True
   save_optim: True
 
 model:
@@ -29,12 +29,24 @@ model:
       activation: "'swish_hard'"
       # activation: "'selu'"
       groups_width: 64
-      alpha: 0.2
+      alpha: 1e-3
       conv_kwargs:
         gamma: "${init_gamma}"
       attention_type: "'eca9'"
       keep_prob: 0.85 # will set the same for each block and then patch to linearly increase
       regnet_attention: True
+      pre_norm_group_width: 16 # make training more stable using pre-normalization
+    NormFreeBlock:
+      activation: "'swish_hard'"
+      groups_width: 64
+      alpha: 1e-3
+      # for some reasons large gamma in NormFreeBlocks leads to large increase in std. probably due to
+      # incorrect beta in the block start. Tuning beta seems harder than disabling gamma, so removing for now
+      # conv_kwargs:
+        # gamma: "${init_gamma}"
+      attention_type: "'eca9'"
+      keep_prob: 0.85 # will set the same for each block and then patch to linearly increase
+      pre_norm_group_width: 16 # make training more stable using pre-normalization
     VarEMA:
       use: False
     scaled_conv3x3: {gamma: "${init_gamma}"}
@@ -50,29 +62,31 @@ model:
     - [-1, 1, ConvActBlock, [64, 64], {stride: 2}]
     - [-1, 1, VarEMA]
       # stage 1
-    - [-1, 4, "ConvActBlock", [64, 64]]
+    - [-1, 4, ConvActBlock, [64, 64]]
       # stage 2
     - [-1, 1, VarEMA]
-    - [-1, 1, "ConvActBlock", [64, 128], {stride: 2}]
+    - [-1, 1, ConvActBlock, [64, 128], {stride: 2}]
     - [-1, 1, VarEMA]
-    - [-1, 5, "ConvActBlock", [128, 128], {groups_width: 64}]
+    - [-1, 5, ConvActBlock, [128, 128], {groups_width: 64}]
       # stage 3
     - [-1, 1, VarEMA]
-    - [-1, 1, "pt.modules.BlurPool", 128]
+    - [-1, 1, pt.modules.BlurPool, 128]
     - [-1, 1, VarEMA]
-    - [-1, 1, "NormFreeBlockTimm", [128, 768, 384]]
-    - [-1, 6, "NormFreeBlockTimm", [768, 768, 384]]
+    - [-1, 1, NormFreeBlock, [128, 384]]
+    - [-1, 6, NormFreeBlock, [384, 384]]
     - [-1, 1, VarEMA]
       # stage 4
-    - [-1, 1, "pt.modules.BlurPool", 768]
+    - [-1, 1, pt.modules.BlurPool, 384]
     - [-1, 1, VarEMA]
-    - [-1, 5, "NormFreeBlockTimm", [768, 768, 384]]
+    - [-1, 1, NormFreeBlockTimm, [384, 768, 384]]
+    - [-1, 4, NormFreeBlockTimm, [768, 768, 384]]
+
       # head
     - [-1, 1, scaled_conv1x1, [768, 2304], {gamma: "${init_gamma}"}]
-    - [-1, 1, 'torch.nn.SiLU']
-    - [-1, 1, "pt.modules.FastGlobalAvgPool2d", [], {flatten: True}]
-    - [-1, 1, "torch.nn.Dropout", [0.2]]
-    - [-1, 1, "nn.Linear", [2304, 1000]]
+    - [-1, 1, torch.nn.SiLU]
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, torch.nn.Dropout, [0.2]]
+    - [-1, 1, nn.Linear, [2304, 1000]]
 
 # using best found optimizer so far
 optim:
@@ -80,11 +94,8 @@ optim:
   weight_decay: 5e-3
   # lower weight decay for badamp experiments
   # weight_decay: 5e-3
-  avg_sq_init: 1e-5
-  # eps: 1e-6
-  eps: 1e-7 # check stability with fixed eps
+  eps: 1e-6
   lr: 0
-  adaptive_eps: False
   # projection: True
 
 # use label smoothing
@@ -119,8 +130,6 @@ run:
     #   weight: 0.001
     #   min_filters: 64
     #   min_norm: 0.1
-    - _target_: src.callbacks.GradDistributionTB
-      log_every: 50
       
 filter_from_wd: [gain] # filter bias and gain from wd
 init_gamma: 2 # larger value to compensate for variance reduction after BlurPool

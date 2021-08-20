@@ -185,6 +185,24 @@ class VarEMA(nn.Module):
         else:  # needed to monitor running variance during training without any changes to the network
             return x
 
+class MeanEMA(nn.Module):
+    """Center tensor by EMA of running means per channel"""
+
+    def __init__(self, decay=0.99):
+        super().__init__()
+        self.decay = decay
+
+    def forward(self, x):
+        # normalize per sample
+        return x - x.mean(dim=(1, 2, 3), keepdim=True)
+        # with torch.no_grad():
+        #     mean = x.mean(dim=(0, 2, 3), keepdim=True)
+        #     # maybe initialize
+        #     if not hasattr(self, 'mean_ema'):
+        #         self.register_buffer("mean_ema", torch.ones_like(mean))
+        #     self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
+        # return x - self.mean_ema
+
 class EMABlock(nn.Module):
     """Use simple EMA normalization before each block to remove variance shift"""
 
@@ -331,17 +349,17 @@ class NormFreeBlock(nn.Module):
         attention_kwargs=None,  # pass something else to attention
         attention_gain=2.0,
         keep_prob=1,
-        gamma=1.0,
         beta=1.0,
         alpha=0.2,
-        n_heads=1,
+        conv_kwargs=None,
+        pre_norm_group_width=None,
     ):
         super().__init__()
         self.in_chs = in_chs
         self.out_chs = out_chs
         mid_chs = mid_chs or out_chs
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
         groups = in_chs // groups_width if groups_width else groups
-        extra_kwargs = dict(groups=groups, gamma=gamma, n_heads=n_heads)
         attn_kw = attention_kwargs if attention_kwargs is not None else {}
         attn_layer = (
             nn.Sequential(get_attn(attention_type)(mid_chs, **attn_kw), Affine(attention_gain))
@@ -351,18 +369,23 @@ class NormFreeBlock(nn.Module):
         layers = [
             # don't want to modify residual, so not in-place
             ("act1", activation_from_name(activation, inplace=False)),
-            ("conv1", scaled_conv3x3(in_chs, mid_chs, gain_init=beta, **extra_kwargs)),
+            ("conv1", scaled_conv3x3(in_chs, mid_chs, gain_init=beta, groups=groups, **conv_kwargs)),
             ("shuffle1", ChannelShuffle(groups) if groups > 1 else nn.Identity()),
             ("act2", activation_from_name(activation)),
-            ("conv2", scaled_conv3x3(mid_chs, out_chs, gain_init=alpha, **extra_kwargs)),
+            ("conv2", scaled_conv3x3(mid_chs, out_chs, gain_init=alpha, groups=groups, **conv_kwargs)),
             ("shuffle2", ChannelShuffle(groups) if groups > 1 else nn.Identity()),
             ("attn", attn_layer),
             ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
         self.block = nn.Sequential(OrderedDict(layers))
+        if pre_norm_group_width is None:
+            self.pre_norm = nn.Identity()
+        else:
+            pre_norm_groups = in_chs // pre_norm_group_width
+            self.pre_norm = nn.GroupNorm(num_groups=pre_norm_groups, num_channels=in_chs)
 
     def forward(self, x):
-        out = self.block(x)
+        out = self.block(self.pre_norm(x))
         if self.in_chs == self.out_chs:
             out += x
         else:
@@ -389,6 +412,7 @@ class NormFreeBlockTimm(nn.Module):
         beta=1.0,
         alpha=0.2,
         regnet_attention=False,  # RegNet puts attention in bottleneck
+        pre_norm_group_width=None,
     ):
         super().__init__()
         self.in_chs = in_chs
@@ -417,9 +441,14 @@ class NormFreeBlockTimm(nn.Module):
             ("drop_path", DropConnect(keep_prob) if keep_prob < 1 else nn.Identity()),
         ]
         self.block = nn.Sequential(OrderedDict(layers))
+        if pre_norm_group_width is None:
+            self.pre_norm = nn.Identity()
+        else:
+            pre_norm_groups = in_chs // pre_norm_group_width
+            self.pre_norm = nn.GroupNorm(num_groups=pre_norm_groups, num_channels=in_chs)
 
     def forward(self, x):
-        out = self.block(x)
+        out = self.block(self.pre_norm(x))
         if self.in_chs == self.out_chs:
             out += x
         else:
