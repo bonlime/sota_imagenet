@@ -28,6 +28,53 @@ class SpectralDistributionTB(pt_clb.Callback):
                 spectrum = torch.linalg.svdvals(p.weight.view(p.weight.size(0), -1).detach())
             self.state.tb_logger.add_histogram(f"spectrum/{n}", spectrum, self.state.global_sample_step)
 
+@pt_clb.rank_zero_only
+class GradDistributionTB(pt_clb.Callback):
+    """Log distribution of square of gradients during training"""
+    def __init__(self, log_every=500, subsample=10):
+        self.log_every = log_every
+        self.subsample = subsample
+
+    def on_batch_end(self):
+        if self.state.step % self.log_every != 0:
+            return
+
+        # logger.info("Logging exp_avg_sq distribution")
+        all_exp_avg = []
+        all_exp_avg_sq = []
+        for v in self.state.optimizer.state.values():
+            all_exp_avg.append(v['exp_avg'].flatten().sort().values[::self.subsample])
+            all_exp_avg_sq.append(v['exp_avg_sq'].flatten().sort().values[::self.subsample])
+
+        all_exp_avg = torch.cat(all_exp_avg)
+        all_exp_avg_sq = torch.cat(all_exp_avg_sq)
+        all_exp_avg = all_exp_avg.abs().sort().values[::self.subsample]
+        all_exp_avg_sq = all_exp_avg_sq.sort().values[::self.subsample]
+        all_exp_avg_log = all_exp_avg.log10()
+        all_exp_avg_sq_log = all_exp_avg_sq.log10()
+        self.state.tb_logger.add_histogram("optim/all_exp_avg_log", all_exp_avg_log, self.state.global_sample_step)
+        self.state.tb_logger.add_histogram("optim/all_exp_avg_sq_log", all_exp_avg_sq_log, self.state.global_sample_step)
+
+        # this shuldn't be here but let's keep for now
+        for n, p in self.state.model.state_dict().items():
+            self.state.tb_logger.add_histogram(f"model/{n}", p.flatten(), self.state.global_sample_step)
+        
+        return super().on_batch_end()
+
+    def on_after_backward(self):
+        if self.state.step % self.log_every != 0:
+            return
+
+        for p in self.state.model.parameters():
+            if p.grad is None:
+                continue
+            p_data = p.detach()
+            g_data = p.grad.detach()
+            max_norm = self._unitwise_norm(p_data).clamp_(min=self.eps).mul_(self.clip_factor)
+            grad_norm = self._unitwise_norm(g_data)
+            clipped_grad = g_data * (max_norm / grad_norm.clamp(min=1e-6))
+            new_grads = torch.where(grad_norm < max_norm, g_data, clipped_grad)
+            p.grad.detach().copy_(new_grads)
 
 class ForwardWeightNorm(pt_clb.Callback):
     """Turn convs into StdConvs this is different from WeightNorm which implements the same idea but in backward mode
@@ -236,6 +283,7 @@ def unitwise_norm(x, norm_type=2.0, expand_as=False):
         # might need special cases for other weights (possibly MHA) where this may not be true
         res = x.norm(norm_type, dim=tuple(range(1, x.ndim)), keepdim=True)
     return res.expand_as(x) if expand_as else res
+
 
 
 class SAM(pt_clb.Callback):
