@@ -70,8 +70,8 @@ class GradDistributionTB(pt_clb.Callback):
                 continue
             p_data = p.detach()
             g_data = p.grad.detach()
-            max_norm = self._unitwise_norm(p_data).clamp_(min=self.eps).mul_(self.clip_factor)
-            grad_norm = self._unitwise_norm(g_data)
+            max_norm = unitwise_norm(p_data).clamp_(min=self.eps).mul_(self.clip_factor)
+            grad_norm = unitwise_norm(g_data)
             clipped_grad = g_data * (max_norm / grad_norm.clamp(min=1e-6))
             new_grads = torch.where(grad_norm < max_norm, g_data, clipped_grad)
             p.grad.detach().copy_(new_grads)
@@ -267,12 +267,17 @@ class CutmixMixup(pt_clb.Cutmix, pt_clb.Mixup):
 class OrthoInitClb(pt_clb.Callback):
     def __init__(self, gain=1):
         self.gain = gain
+        # if using scheduler `on_begin` would be called multiple times
+        self.has_been_init = False
 
     def on_begin(self):
+        if self.has_been_init:
+            return
         logger.info("Applying orthogonal initialization")
         for m in self.state.model.modules():
             if isinstance(m, torch.nn.Conv2d):
                 torch.nn.init.orthogonal_(m.weight, gain=self.gain)
+        self.has_been_init = True
 
 
 def unitwise_norm(x, norm_type=2.0, expand_as=False):
