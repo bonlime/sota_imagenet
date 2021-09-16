@@ -31,50 +31,34 @@ class SpectralDistributionTB(pt_clb.Callback):
 @pt_clb.rank_zero_only
 class GradDistributionTB(pt_clb.Callback):
     """Log distribution of square of gradients during training"""
-    def __init__(self, log_every=500, subsample=10):
+    def __init__(self, log_every=500, subsample=10, state_keys=['exp_avg', 'exp_avg_sq']):
         self.log_every = log_every
         self.subsample = subsample
+        self.state_keys = state_keys
 
     def on_batch_end(self):
         if self.state.step % self.log_every != 0:
             return
 
-        # logger.info("Logging exp_avg_sq distribution")
-        all_exp_avg = []
-        all_exp_avg_sq = []
-        for v in self.state.optimizer.state.values():
-            all_exp_avg.append(v['exp_avg'].flatten().sort().values[::self.subsample])
-            all_exp_avg_sq.append(v['exp_avg_sq'].flatten().sort().values[::self.subsample])
+        # logger.info("Logging distribution")
+        # log distribution for optimizer state
+        for state_k in self.state_keys:
+            all_gathered = []
+            for v in self.state.optimizer.state.values():
+                all_gathered.append(v[state_k].flatten().abs().sort().values[::self.subsample])
+            all_gathered = torch.cat(all_gathered)
+            # clamp_min to avoid outliers distorting the chart too much
+            all_gathered_log = all_gathered.sort().values[::self.subsample].log10().clamp_min(-15)
+            self.state.tb_logger.add_histogram(f"optim/{state_k}_log", all_gathered_log, self.state.global_sample_step)
 
-        all_exp_avg = torch.cat(all_exp_avg)
-        all_exp_avg_sq = torch.cat(all_exp_avg_sq)
-        all_exp_avg = all_exp_avg.abs().sort().values[::self.subsample]
-        all_exp_avg_sq = all_exp_avg_sq.sort().values[::self.subsample]
-        all_exp_avg_log = all_exp_avg.log10()
-        all_exp_avg_sq_log = all_exp_avg_sq.log10()
-        self.state.tb_logger.add_histogram("optim/all_exp_avg_log", all_exp_avg_log, self.state.global_sample_step)
-        self.state.tb_logger.add_histogram("optim/all_exp_avg_sq_log", all_exp_avg_sq_log, self.state.global_sample_step)
-
-        # this shuldn't be here but let's keep for now
-        for n, p in self.state.model.state_dict().items():
-            self.state.tb_logger.add_histogram(f"model/{n}", p.flatten(), self.state.global_sample_step)
-        
-        return super().on_batch_end()
-
-    def on_after_backward(self):
-        if self.state.step % self.log_every != 0:
-            return
-
+        # log distribution for all model weights combined
+        all_gathered = []
         for p in self.state.model.parameters():
-            if p.grad is None:
-                continue
-            p_data = p.detach()
-            g_data = p.grad.detach()
-            max_norm = unitwise_norm(p_data).clamp_(min=self.eps).mul_(self.clip_factor)
-            grad_norm = unitwise_norm(g_data)
-            clipped_grad = g_data * (max_norm / grad_norm.clamp(min=1e-6))
-            new_grads = torch.where(grad_norm < max_norm, g_data, clipped_grad)
-            p.grad.detach().copy_(new_grads)
+            all_gathered.append(p.flatten().abs().sort().values[::self.subsample])
+        all_gathered = torch.cat(all_gathered)
+        # clamp_min to avoid outliers distorting the chart too much
+        all_gathered_log = all_gathered.sort().values[::self.subsample].log10().clamp_min(-15)
+        self.state.tb_logger.add_histogram(f"optim/model_params_log", all_gathered_log, self.state.global_sample_step)
 
 class ForwardWeightNorm(pt_clb.Callback):
     """Turn convs into StdConvs this is different from WeightNorm which implements the same idea but in backward mode
