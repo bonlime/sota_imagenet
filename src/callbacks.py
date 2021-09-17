@@ -274,7 +274,60 @@ def unitwise_norm(x, norm_type=2.0, expand_as=False):
     return res.expand_as(x) if expand_as else res
 
 
+class SAMOriginal(pt_clb.Callback):
+    """Very close to original implementation of ASAM from SamsungLabs"""
 
+    def __init__(self, rho=0.5, eta=0.01):
+        self.rho = rho
+        self.eta = eta
+
+
+    @torch.no_grad()
+    def on_after_backward(self):
+        # first backward has already been computed (with grad scaled loss)
+        # need to calculate epsilon and backward using new weight
+        self.state.grad_scaler.unscale_(self.state.optimizer)
+
+        scale = self.rho / self._grad_norm()
+        for group in self.state.optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                
+                eps = p.pow(2) * p.grad * scale if p.ndim > 1 else p.grad * scale
+                # store eps_step in optimizer to avoid having own state_dict
+                self.state.optimizer.state[p]['eps_step'] = eps
+                p.add_(eps)
+                
+        # without update scaler thinks grads are unscaled (because we explicitly called `unscale_`). this leads to NaNs
+        self.state.grad_scaler.update()
+        self.state.optimizer.zero_grad()
+        #         __
+        # compute \/ L (w + eps)
+        with torch.enable_grad():
+            with torch.cuda.amp.autocast():
+                data, target = self.state.input
+                loss_second = self.state.criterion(self.state.model(data), target)
+            self.state.grad_scaler.scale(loss_second).backward()
+
+        for group in self.state.optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                p.sub_(self.state.optimizer.state[p]['eps_step'])
+        # after that default optimizer would perform its' step as usual
+
+    @torch.no_grad()
+    def _grad_norm(self):
+        wgrads = []
+        for group in self.state.optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                # using p.ndim > 1 instead `if 'weight' in name`, it have the same meaning
+                pw = p.grad * p.abs().clamp_min_(self.eta) if p.ndim > 1 else p.grad
+                wgrads.append(pw.norm())
+        return torch.stack(wgrads).norm().clamp_min(2e-5)
 class SAM(pt_clb.Callback):
     """
     Implements Sharpness-aware minimization [1] as Callback.
@@ -327,7 +380,7 @@ class SAM(pt_clb.Callback):
         else:
             grad_norms = [w.norm(2).clamp_min(self.eps).expand_as(w) for w in grads]
             # or eps_2?
-            weight_norms = [w.norm(2).clamp_min(self.eps).expand_as(w) for w in params_with_grad]
+            weight_norms = [w.norm(2).clamp_min(self.eps_2).expand_as(w) for w in params_with_grad]
 
         # epsilon = || w || / ||g|| * g * rho
         # epsilon = weight_norms # rename for convenience
@@ -341,6 +394,7 @@ class SAM(pt_clb.Callback):
 
         # virtual step toward epsilon
         torch._foreach_add_(params_with_grad, epsilon)
+
         # without update scaler thinks grads are unscaled (because we explicitly called `unscale_`). this leads to NaNs
         self.state.grad_scaler.update()
         self.state.optimizer.zero_grad()
