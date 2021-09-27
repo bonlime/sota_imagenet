@@ -14,9 +14,9 @@ from pytorch_tools.fit_wrapper.callbacks import Callback as NoClbk
 import hydra
 from omegaconf import OmegaConf
 
-from src.arg_parser import StrictConfig, DataStage
-from src.dali_dataloader import DaliDataManager
-from src.callbacks import WeightDistributionTB
+from sota_imagenet.arg_parser import StrictConfig, DataStage
+from sota_imagenet.dali_dataloader import DaliDataManager
+from sota_imagenet.callbacks import WeightDistributionTB
 
 
 @hydra.main(config_path="./configs", config_name="base")

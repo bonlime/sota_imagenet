@@ -21,7 +21,7 @@ import nvidia.dali.tfrecord as tfrec
 
 from pytorch_tools.utils.misc import env_rank, env_world_size, listify
 
-from src.arg_parser import LoaderConfig, StrictConfig, TrainLoaderConfig, ValLoaderConfig
+from sota_imagenet.arg_parser import LoaderConfig, StrictConfig, TrainLoaderConfig, ValLoaderConfig
 
 # values used for normalization. there is no reason to use Imagenet mean/std so i'm normalizing to [-5, 5]
 DATA_MEAN = (0.5 * 255, 0.5 * 255, 0.5 * 255)
