@@ -284,6 +284,10 @@ class SAMOriginal(pt_clb.Callback):
 
     @torch.no_grad()
     def on_after_backward(self):
+        # skip first step, to allow optimizer to initialize it's own state
+        if len(self.state.optimizer.state) == 0:
+            return
+        
         # first backward has already been computed (with grad scaled loss)
         # need to calculate epsilon and backward using new weight
         self.state.grad_scaler.unscale_(self.state.optimizer)
@@ -294,7 +298,7 @@ class SAMOriginal(pt_clb.Callback):
                 if p.grad is None:
                     continue
                 
-                eps = p.pow(2) * p.grad * scale if p.ndim > 1 else p.grad * scale
+                eps = p.pow(2).clamp_min_(self.eta) * p.grad * scale if p.ndim > 1 else p.grad * scale
                 # store eps_step in optimizer to avoid having own state_dict
                 self.state.optimizer.state[p]['eps_step'] = eps
                 p.add_(eps)
@@ -324,6 +328,7 @@ class SAMOriginal(pt_clb.Callback):
             for p in group["params"]:
                 if p.grad is None:
                     continue
+                # original implementation uses norm from all network and 
                 # using p.ndim > 1 instead `if 'weight' in name`, it have the same meaning
                 pw = p.grad * p.abs().clamp_min_(self.eta) if p.ndim > 1 else p.grad
                 wgrads.append(pw.norm())
