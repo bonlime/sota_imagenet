@@ -1,0 +1,49 @@
+# @package _global_
+
+# config for ResNet50 close to default but with harder augs to prevent over-fit
+# + my re-implementation Novograd with previous best found hyper-parameters
+# lr = 0.05, wd = 0.002 (real wd ~= 1e-4)
+# + unit-wise norm for each parameter
+
+# run2: small-wd
+# wd: 0.002 -> 0.0002.
+
+defaults:
+  - /base@_here_
+
+log:
+  exp_name: r50_my-nov-unit_small-wd
+  histogram: True
+  print_model: True
+  save_optim: True
+  
+model:
+  _target_: pytorch_tools.models.resnet50
+
+# use larger weight decay because of label smoothing
+optim:
+  _target_: src.optimizers.MyNovograd
+  weight_decay: 0.0002
+  betas: [0.9, 0.99]
+  lr: 0
+  unitwise_norm: True
+
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 192
+  color_twist_prob: 0.3
+
+run:
+  stages:
+    - {start: 0, end: 5, lr: [0.0001, 0.05]}
+    - {start: 5, end: 90, lr: [0.05, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: src.callbacks.OrthoInitClb
+
+  # very short period for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  ema_decay: 0.9993
