@@ -1,0 +1,55 @@
+# @package _global_
+
+# config for ResNet50 close to default but with some augs to prevent over-fit
+# LR = 0.5 for 2 GPUs. BS = 224, not 256 like in previous experiments, so LR in fact is slightly larger than before
+# warmup + hard augs. 
+
+# run2: add dumpening - works much worse with it enabled
+
+# run3: default + ASAM
+defaults:
+  - /base@_here_
+
+log:
+  exp_name: r50_base-sgd_test #asam
+  histogram: True
+  print_model: True
+  save_optim: True
+  
+model:
+  _target_: pytorch_tools.models.resnet50
+
+# use larger weight decay because of label smoothing
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 192
+  # color augmentations to prevent overfit
+  color_twist_prob: 0.3
+
+run:
+  stages:
+    # TODO: change 0.1 back to 0.3
+    - {start: 0, end: 5, lr: [0.0001, 0.1]}
+    - {start: 5, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    # - _target_: src.callbacks.OrthoInitClb
+
+    # - _target_: src.callbacks.SAMOriginal
+
+    - _target_: src.callbacks.GradDistributionTB
+      state_keys: 
+        - momentum_buffer
+
+  
+  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  ema_decay: 0.9993

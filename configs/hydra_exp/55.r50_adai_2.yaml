@@ -1,0 +1,61 @@
+# @package _global_
+
+# Adai + Stable Weight decay
+# previous run did converge but not as well as default AdamL
+# need to re-read the paper and try again
+
+# + wd 1e-3 -> 3e-4 to match SGD experiments
+# 
+defaults:
+  - /base@_here_
+
+log:
+  # exp_name: r50_adais2
+  # exp_name: r50_adais2_sgd-mom_sqrt-mom
+  exp_name: r50_adais2_sgd-mom_stable-wd_low-wd
+  histogram: True
+  print_model: True
+  save_optim: True
+  
+model:
+  _target_: pytorch_tools.models.resnet50
+
+optim:
+  _target_: src.optimizers.MyAdai
+  betas: [0.1, 0.99]
+  # wd like in SGD experiments. maybe need higher due to much larger adaptivity
+  # weight_decay: 3e-4
+  # setting lower wd for stable-wd option to avoid too large weight growth
+  weight_decay: 3e-5
+  lr: 0
+  sgd_mom: True
+  # sqrt_mom: True
+  stable_wd: True
+  # per_layer: False
+
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 192
+  # color augmentations to prevent overfit
+  color_twist_prob: 0.3
+
+run:
+  stages:
+    - {start: 0, end: 5, lr: [0.0001, 0.1]}
+    - {start: 5, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: src.callbacks.OrthoInitClb
+
+    - _target_: src.callbacks.GradDistributionTB
+      state_keys:
+        - exp_avg
+      # log_every: 50
+
+  
+  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  ema_decay: 0.9993

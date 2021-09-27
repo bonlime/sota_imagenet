@@ -1,0 +1,47 @@
+# @package _global_
+
+# AdamP to check norm growth and other interesting stats
+# set eps to 1e-5 to decrease variability
+
+defaults:
+  - /base@_here_
+
+log:
+  exp_name: r50_adamp
+  histogram: True
+  print_model: True
+  save_optim: True
+  
+model:
+  _target_: pytorch_tools.models.resnet50
+
+# use larger weight decay because of label smoothing
+optim:
+  _target_: adamp.AdamP
+  weight_decay: 1e-3
+  lr: 0
+  eps: 1e-5
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 192
+  # color augmentations to prevent overfit
+  color_twist_prob: 0.3
+
+run:
+  stages:
+    - {start: 0, end: 5, lr: [0, 0.001]}
+    - {start: 5, end: 90, lr: [0.001, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: src.callbacks.OrthoInitClb
+
+    - _target_: src.callbacks.GradDistributionTB
+      log_every: 50
+
+  
+  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  ema_decay: 0.9993

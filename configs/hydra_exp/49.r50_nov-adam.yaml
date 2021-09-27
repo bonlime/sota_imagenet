@@ -1,0 +1,54 @@
+# @package _global_
+
+# config for ResNet50 close to default but with harder augs to prevent over-fit
+# + my version of optimizer with less adaptivity than in Adam
+
+# run2 gives good results at first but then strongly overfits. Need slightly higher wd
+
+# run3. AdamL + ASAM. Config same as in exp45-run2, but with different optimizer
+# originally it very strongly over-fitted, but maybe now it will work....
+#
+defaults:
+  - /base@_here_
+
+log:
+  exp_name: r50_adaml_asam-orig
+  histogram: True
+  print_model: True
+  save_optim: True
+  
+model:
+  _target_: pytorch_tools.models.resnet50
+
+# use larger weight decay because of label smoothing
+optim:
+  # in PyTorch implementation weight decay is lr * wd, so 0.1 == 1e-4 as in AdamW paper
+  _target_: src.optimizers.AdamLayerwise
+  weight_decay: 2e-2
+  betas: [0.9, 0.995]
+  lr: 0
+  # unitwise: False # using layerwise grad mean
+  # weight_adapt: True
+
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 192
+  color_twist_prob: 0.3
+
+run:
+  stages:
+    - {start: 0, end: 5, lr: [0.0001, 0.002]}
+    - {start: 5, end: 90, lr: [0.002, 0], lr_mode: cos}
+
+  extra_callbacks:
+    # - _target_: src.callbacks.OrthoInitClb
+    - _target_: src.callbacks.SAMOriginal
+
+    - _target_: src.callbacks.GradDistributionTB
+      # log_every: 50
+
+  # very short period of ~3 epoch for ema: 0.9993 ** (2500 * 3) ~= 5e-3
+  ema_decay: 0.9993
