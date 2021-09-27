@@ -6,6 +6,7 @@ slightly larger, it also allows much greater flexibility than using separate cla
 """
 
 import random
+from loguru import logger
 from copy import deepcopy
 from collections import OrderedDict
 from typing import List, Dict, Union
@@ -37,21 +38,48 @@ class ScaledStdConv2d(nn.Conv2d):
     Ref:
         [1] Characterizing signal propagation to close the performance gap in unnormalized ResNets (https://arxiv.org/abs/2101.08692)"""
 
-    def __init__(self, in_chs, out_chs, *args, gamma=1.0, gain_init=1.0, eps=1e-6, n_heads=1, single_gain=False, norm=False, **kwargs):
+    def __init__(
+        self,
+        in_chs,
+        out_chs,
+        *args,
+        gamma=1.0,
+        gain_init=1.0,
+        eps=1e-6,
+        n_heads=1,
+        norm=False,
+        partial_conv=False,
+        coord_conv=False,
+        **kwargs,
+    ):
         out_chs *= n_heads
+        if coord_conv:
+            in_chs += 2
         super().__init__(in_chs, out_chs, *args, **kwargs)
-        # if single_gain:
-            # self.gain = nn.Parameter(torch.tensor(gain_init))
-        # else:
         self.scale = gamma * self.weight[0].numel() ** -0.5  # gamma * 1 / sqrt(fan-in)
-        self.gain = nn.Parameter(torch.full((self.out_channels, 1, 1, 1), float(gain_init))) 
+        self.gain = nn.Parameter(torch.full((self.out_channels, 1, 1, 1), float(gain_init)))
         self.gamma = gamma
         self.eps = eps
         self.n_heads = n_heads
-        self.norm = norm # if True performs weight normalizatin instead of weight standardization
+        self.norm = norm  # if True performs weight normalizatin instead of weight standardization
+        self.partial_conv = partial_conv and kwargs.get("padding", 0) == 1  # implement only for pad=1 for now
+        if self.partial_conv:
+            assert self.weight.shape[2:] == (3, 3), "Partial conv only supports 3x3 conv"
+        self.register_buffer("partial_mask", torch.zeros(1, 1, 1, 1))
+        self.register_buffer("coords", torch.zeros(1, 1, 1, 1))
+        self.coord_conv = coord_conv
 
     def forward(self, x):
+
+        if self.coord_conv:
+            # need to check both spatial and batch dimension here
+            if (self.coords.size(-1) != x.size(-1)) or (self.coords.size(0) != x.size(0)):
+                self.coords = self._get_coords(x)
+            x = torch.cat([x, self.coords], dim=1)
+
         if self.norm:
+            # upd. on 01.09.21
+            # maybe it didn't work because of centralization? maybe dividing by norm itself should be enough?
             weight = pt.utils.misc.zero_mean_conv_weight(self.weight)
             weight = weight / (weight.view(weight.size(0), -1).norm(dim=-1) + self.eps)[:, None, None, None]
             weight = weight * self.gain * self.scale
@@ -66,44 +94,81 @@ class ScaledStdConv2d(nn.Conv2d):
                 momentum=0.0,
                 eps=self.eps,
             ).reshape_as(self.weight)
-        proj = F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        # skip adding bias for partial conv
+        # proj = F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        # return proj
+
+        bias = None if self.partial_conv else self.bias
+        proj = F.conv2d(x, weight, bias, self.stride, self.padding, self.dilation, self.groups)
         if self.n_heads != 1:
+            # this idea doesn't work maybe delete
             proj = proj.view(proj.size(0), self.n_heads, proj.size(1) // self.n_heads, proj.size(2), proj.size(3))
             proj = proj.mean(1)
+
+        if self.partial_conv:
+            if (proj.size(-1) != self.partial_mask.size(-1)):
+                self.partial_mask = self._get_partial_mask(proj)
+            # add bias only after masking
+            proj = proj.mul(self.partial_mask)
+            if self.bias is not None:
+                proj = proj + self.bias.view(1, proj.size(1), 1, 1)
         return proj
+
+    @torch.no_grad()
+    def _get_partial_mask(self, inp: torch.Tensor):
+        # Idea from `Partial Convolution based Padding` paper has too many extra details long-story short
+        # we compensate for zero padding by slightly increasing output of convolution at the edges. that's it.
+        mask = torch.ones(1, 1, inp.size(2), inp.size(3)).to(inp)
+        kernel = torch.ones(1, 1, 3, 3).to(inp)
+        mask = F.conv2d(mask, kernel, padding=1)
+        return 9 / mask
+
+    @torch.no_grad()
+    def _get_coords(self, x):
+        """Idea from coord conv. give model understanding of current absolute location on the image
+        SOLO paper stated that single CoordConv is enough and gains from multiple of them are neglegible
+        """
+        xx = torch.linspace(-1, 1, x.size(-1)).expand(x.size(0), 1, x.size(2), x.size(3)).to(x)
+        yy = torch.linspace(-1, 1, x.size(-2)).expand(x.size(0), 1, x.size(3), x.size(2)).to(x)
+        yy = yy.transpose(-1, -2)
+        return torch.cat([xx, yy], dim=1)
 
     def extra_repr(self):
         return super().extra_repr() + f", gamma={self.gamma}"
 
 
-def scaled_conv3x3(in_chs, out_chs, **extra_kwargs):
+def scaled_conv3x3(in_chs, out_chs, padding=1, **extra_kwargs):
     """3x3 convolution with padding"""
-    return ScaledStdConv2d(in_chs, out_chs, kernel_size=3, padding=1, bias=True, **extra_kwargs)
+    return ScaledStdConv2d(in_chs, out_chs, kernel_size=3, padding=padding, bias=True, **extra_kwargs)
 
 
 def scaled_conv1x1(in_chs, out_chs, **extra_kwargs):
     """3x3 convolution with padding"""
     return ScaledStdConv2d(in_chs, out_chs, kernel_size=1, padding=0, bias=True, **extra_kwargs)
 
+
 def wrapped_conv1x1(in_chs, out_chs, gain_init=None, gamma=None, **extra_kwargs):
     conv = conv1x1(in_chs, out_chs, **extra_kwargs)
     if gamma is None:
         return conv
     else:
-        return nn.Sequential(OrderedDict([('conv', conv), ('gain', Gain(out_chs))]))
+        return nn.Sequential(OrderedDict([("conv", conv), ("gain", Gain(out_chs))]))
+
 
 def wrapped_conv3x3(in_chs, out_chs, gain_init=None, gamma=None, **extra_kwargs):
     conv = conv3x3(in_chs, out_chs, **extra_kwargs)
     if gamma is None:
         return conv
-    else:   
-        return nn.Sequential(OrderedDict([('conv', conv), ('gain', Gain(out_chs))]))
+    else:
+        return nn.Sequential(OrderedDict([("conv", conv), ("gain", Gain(out_chs))]))
+
 
 REMOVE_WN = True
 REMOVE_WN = False
 if REMOVE_WN:
     scaled_conv1x1 = wrapped_conv1x1
     scaled_conv3x3 = wrapped_conv3x3
+
 
 class ChannelShuffle(nn.Module):
     """shuffles groups inside tensor. used to mix channels after grouped convolution. this is cheaper than using conv1x1
@@ -120,6 +185,7 @@ class ChannelShuffle(nn.Module):
 
     def extra_repr(self):
         return f"groups={self.groups}"
+
 
 class ScaleNorm(nn.Module):
     def __init__(self, eps=1e-5, trainable=True):
@@ -151,6 +217,7 @@ class Affine(nn.Module):
     def extra_repr(self) -> str:
         return f"value={self.value}, trainable={self.trainable}"
 
+
 class Gain(nn.Module):
     def __init__(self, size: float):
         super().__init__()
@@ -159,9 +226,10 @@ class Gain(nn.Module):
 
     def forward(self, x):
         return x * self.gain
-    
+
     def extra_repr(self) -> str:
         return f"{self.size}"
+
 
 class VarEMA(nn.Module):
     """Normalize tensor var by EMA of running vars"""
@@ -185,6 +253,7 @@ class VarEMA(nn.Module):
         else:  # needed to monitor running variance during training without any changes to the network
             return x
 
+
 class MeanEMA(nn.Module):
     """Center tensor by EMA of running means per channel"""
 
@@ -202,6 +271,7 @@ class MeanEMA(nn.Module):
         #         self.register_buffer("mean_ema", torch.ones_like(mean))
         #     self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
         # return x - self.mean_ema
+
 
 class EMABlock(nn.Module):
     """Use simple EMA normalization before each block to remove variance shift"""
@@ -253,13 +323,13 @@ class EMABlock(nn.Module):
 
 
 class XCA_mod(nn.Module):
-    """ Cross-Covariance Attention (XCA)
+    """Cross-Covariance Attention (XCA)
     Operation where the channels are updated using a weighted sum. The weights are obtained from the (softmax
     normalized) Cross-covariance matrix (Q^T \\cdot K \\in d_h \\times d_h)
     This could be viewed as dynamic 1x1 convolution
     """
 
-    def __init__(self, dim, num_heads=8, attn_drop=0., proj_drop=0.):
+    def __init__(self, dim, num_heads=8, attn_drop=0.0, proj_drop=0.0):
         super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
@@ -274,7 +344,7 @@ class XCA_mod(nn.Module):
         # B x C x H x W -> B x 3*C x H x W -> B x 3 x Hd x C` x H*W -> 3 x B x Hd x C` x H*W
         qkv = self.qkv(x).reshape(B, 3, self.num_heads, C // self.num_heads, -1).transpose(0, 1)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy
-        
+
         # Paper section 3.2 l2-Normalization and temperature scaling
         q = torch.nn.functional.normalize(q, dim=-1)
         k = torch.nn.functional.normalize(k, dim=-1)
@@ -282,14 +352,14 @@ class XCA_mod(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * self.temperature
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
-        
+
         # B x Hd x C` x C` @ B x Hd x C` x H*W -> B x C x H x W
         x_out = (attn @ v).reshape(B, C, H, W)
         x_out = self.proj(x_out)
         x_out = self.proj_drop(x_out)
-        # in original paper there is no residual here 
+        # in original paper there is no residual here
         return x + x_out
-    
+
     def load_state_dict(self, state_dict):
         # to allow loading from Linear layer
         new_sd = {}
@@ -305,7 +375,15 @@ class ConvActBlock(nn.Module):
     """conv + residual -> Act. allows fusing convolution with residual later"""
 
     def __init__(
-        self, in_chs, out_chs, stride=1, groups=1, groups_width=None, activation="relu", conv_kwargs=None, attn_kwargs=None,
+        self,
+        in_chs,
+        out_chs,
+        stride=1,
+        groups=1,
+        groups_width=None,
+        activation="relu",
+        conv_kwargs=None,
+        attn_kwargs=None,
     ):  # , keep_prob=1):
         super().__init__()
         self.in_chs = in_chs
@@ -319,7 +397,6 @@ class ConvActBlock(nn.Module):
         # maybe actually could use inplace here, it shouldn't matter
         self.act = activation_from_name(activation, inplace=False)
         self.attn = XCA_mod(dim=out_chs, **attn_kwargs) if attn_kwargs is not None else nn.Identity()
-
 
     def forward(self, x):
         out = self.shuffle(self.conv(x))
@@ -413,6 +490,7 @@ class NormFreeBlockTimm(nn.Module):
         alpha=0.2,
         regnet_attention=False,  # RegNet puts attention in bottleneck
         pre_norm_group_width=None,
+        full_conv=False,  # if True set padding=2 in first conv and padding=0 in second one
     ):
         super().__init__()
         self.in_chs = in_chs
@@ -426,14 +504,21 @@ class NormFreeBlockTimm(nn.Module):
             if attention_type
             else nn.Identity()
         )
+        # idea is from "On Translation Invariance in CNNs: Convolutional Layers can Exploit Absolute Spatial Location"
+        # where they have shown than Full-Conv is better than same-conv. But their idea leads to huge increase in size of feature map
+        # so i'm applying full-conv + valid conv instead of same-conv + same-conv
+        # upd. changing meaning of `full_conv` flag to use reflect convolution
+        pad1, pad2 = (1, 1)  # (2, 0) if full_conv else (1, 1)
+        if full_conv:
+            conv_kwargs["padding_mode"] = "reflect"
         layers = [
             # don't want to modify residual, so not in-place
             ("act1", activation_from_name(activation, inplace=False)),
             ("conv1", scaled_conv1x1(in_chs, mid_chs, gain_init=beta, **conv_kwargs)),
             ("act2", activation_from_name(activation)),
-            ("conv2", scaled_conv3x3(mid_chs, mid_chs, groups=groups, **conv_kwargs)),
+            ("conv2", scaled_conv3x3(mid_chs, mid_chs, groups=groups, padding=pad1, **conv_kwargs)),
             ("act2b", activation_from_name(activation)),
-            ("conv2b", scaled_conv3x3(mid_chs, mid_chs, groups=groups, **conv_kwargs)),
+            ("conv2b", scaled_conv3x3(mid_chs, mid_chs, groups=groups, padding=pad2, **conv_kwargs)),
             ("attn1", attn_layer if regnet_attention else nn.Identity()),
             ("act3", activation_from_name(activation)),
             ("conv3", scaled_conv1x1(mid_chs, out_chs, gain_init=alpha, **conv_kwargs)),
@@ -516,25 +601,27 @@ def update_dict(to_dict: Dict, from_dict: Dict) -> Dict:
             to_dict[k] = v
     return to_dict
 
+
 def test_update_dict():
     """Tests to make sure updating dict works as expected"""
     # simple update
-    d_to = {'a': 10, 'b': 20}
-    d_from = {'a': 12, 'c': 30}
-    d_expected = {'a': 12, 'b': 20, 'c': 30}
+    d_to = {"a": 10, "b": 20}
+    d_from = {"a": 12, "c": 30}
+    d_expected = {"a": 12, "b": 20, "c": 30}
     assert update_dict(d_to, d_from) == d_expected
 
     # recursive update. dict.update would fail in this case
-    d_to = {'foo': {'a': 10, 'b': 20}}
-    d_from = {'foo': {'a': 12, 'c': 30}}
-    d_expected = {'foo': {'a': 12, 'b': 20, 'c': 30}}
+    d_to = {"foo": {"a": 10, "b": 20}}
+    d_from = {"foo": {"a": 12, "c": 30}}
+    d_expected = {"foo": {"a": 12, "b": 20, "c": 30}}
     assert update_dict(d_to, d_from) == d_expected
 
     # when key is not present in `to`
-    d_to = {'bar': 1}
-    d_from = {'foo': {'a': 12, 'c': 30}}
-    d_expected = {'bar': 1, 'foo': {'a': 12, 'c': 30}}
+    d_to = {"bar": 1}
+    d_from = {"foo": {"a": 12, "c": 30}}
+    d_expected = {"bar": 1, "foo": {"a": 12, "c": 30}}
     assert update_dict(d_to, d_from) == d_expected
+
 
 class CModel(nn.Module):
     """
@@ -562,7 +649,7 @@ class CModel(nn.Module):
     def _patch_drop_path(self, drop_path_name="drop_path"):
         """DropPath works best when it linearly increased each block. Expects than drop_path layer is already created (by passing keep_prob"""
         keep_probs = [m.keep_prob for n, m in self.layers.named_modules() if drop_path_name in n]
-        if len(keep_probs) == 0:  # skip if no drop_path 
+        if len(keep_probs) == 0:  # skip if no drop_path
             return
         max_keep_prob = max(keep_probs)
         num_drop_layers = len(keep_probs)
