@@ -1,17 +1,24 @@
 # @package _global_
 
-# close to exp33. just checking that there is no regression in model performance
-# [10-20 20:27:39] - Model params: 16.92M                                                                                                                                           │··············
-# [10-20 20:27:39] - Acc@1 78.260 Acc@5 94.196                                                                                                                                      │··············
-# [10-20 20:27:39] - Total time: 28h 26.1m                                                                                                                                          
+# same as exp56 but using AvgPool2d(2, 2) instead of BlurPool. It avoid padding and should be faster
+# expected that it would give almost the same results
 
-# run2: use AdamL optimizer
+# trained only 65/90 epochs but results are very close
+# BlurPool
+# [10-20 12:09:17] - Epoch 65 | lr 5.97e-02
+# [10-20 12:27:41] - Train loss: 3.1068 | Acc@1: 59.8983 | Acc@5: 80.8834
+# [10-20 12:27:41] - Val   loss: 1.9702 | Acc@1: 73.9740 | Acc@5: 91.9380
+# avgpool 2x2
+# [10-22 13:44:48] - Epoch 65 | lr 5.97e-02
+# [10-22 14:04:45] - Train loss: 3.1065 | Acc@1: 60.1632 | Acc@5: 81.0367
+# [10-22 14:04:45] - Val   loss: 1.9697 | Acc@1: 73.5160 | Acc@5: 91.8900
+
+
 defaults:
   - /base@_here_
   
 log:
-  # exp_name: nf-conv-act_repeat
-  exp_name: nf-conv-act_repeat #_adaml
+  exp_name: nf-conv-act_repeat
   histogram: True
   print_model: True
 
@@ -20,7 +27,6 @@ model:
   extra_kwargs:
     ConvActBlock:
       activation: "'swish_hard'"
-      # activation: "'selu'"
       conv_kwargs:
         gamma: "${init_gamma}"
         gain_init: 0.1
@@ -57,13 +63,15 @@ model:
     - [-1, 5, "ConvActBlock", [128, 128], {groups_width: 64}]
       # stage 3
     - [-1, 1, VarEMA, 128]
-    - [-1, 1, pt.modules.BlurPool, 128]
+    # - [-1, 1, pt.modules.BlurPool, 128]
+    - [-1, 1, nn.AvgPool2d, [2, 2]]
     - [-1, 1, VarEMA, 128]
     - [-1, 1, NormFreeBlockTimm, [128, 768, 384]]
     - [-1, 6, NormFreeBlockTimm, [768, 768, 384]]
     - [-1, 1, VarEMA, 768]
       # stage 4
-    - [-1, 1, pt.modules.BlurPool, 768]
+    # - [-1, 1, pt.modules.BlurPool, 768]
+    - [-1, 1, nn.AvgPool2d, [2, 2]]
     - [-1, 1, VarEMA, 768]
     - [-1, 5, NormFreeBlockTimm, [768, 768, 384]]
       # head

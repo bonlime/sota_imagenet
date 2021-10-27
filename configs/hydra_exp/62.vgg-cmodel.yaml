@@ -1,0 +1,133 @@
+# @package _global_
+
+# attempt to create VGG using CModel constructor. The only difference for now is using GAP at the end instead of FC
+# original VGG has 138.37M params. While using GAP we reduce number of params by: 512 * 4096 * (7 * 7 - 1) ~= 100M
+# this version uses GAP and have: 37.70M
+# Note: 4096 * (4096 + 1000 + 512) ~= 23M are in the model head. which means than feature-extractor part of VGG
+# has only 14M params which is half of R34 
+# upd. very promising results. Torchvision version has 100M params more and only Acc@1: 73.360  | Acc@5: 91.516. Which means
+# we could easily get even better results by training for longer
+# [10-27 04:08:37] - Train loss: 2.8107 | Acc@1: 68.5003 | Acc@5: 85.9886
+# [10-27 04:08:37] - Val   loss: 1.9763 | Acc@1: 75.4580 | Acc@5: 92.6140
+# [10-27 04:08:37] - Model params: 37.70M
+# [10-27 04:08:37] - Acc@1 75.458 Acc@5 92.614
+# [10-27 04:08:37] - Total time: 41h 17.1m
+
+defaults:
+  - /base@_here_
+  
+log:
+  exp_name: vgg-cmodel_zero
+  histogram: True
+  print_model: True
+
+model:
+  _target_: sota_imagenet.model.CModel
+  extra_kwargs:
+    ReLU:
+      inplace: True
+
+  layer_config:
+    # VGG16: [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    # 1
+    - [-1, 1, conv3x3, [3, 64]]
+    - [-1, 1, nn.BatchNorm2d, 64]
+    - [-1, 1, nn.ReLU]
+    # 2
+    - [-1, 1, conv3x3, [64, 64]]
+    - [-1, 1, nn.BatchNorm2d, 64]
+    - [-1, 1, nn.ReLU]
+    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=2
+    # 3
+    - [-1, 1, conv3x3, [64, 128]]
+    - [-1, 1, nn.BatchNorm2d, 128]
+    - [-1, 1, nn.ReLU]
+    # 4`
+    - [-1, 1, conv3x3, [128, 128]]
+    - [-1, 1, nn.BatchNorm2d, 128]
+    - [-1, 1, nn.ReLU]
+    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=4
+    # 5
+    - [-1, 1, conv3x3, [128, 256]]
+    - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, nn.ReLU]
+    # 6
+    - [-1, 1, conv3x3, [256, 256]]
+    - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, nn.ReLU]
+    # 7
+    - [-1, 1, conv3x3, [256, 256]]
+    - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, nn.ReLU]
+    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=8
+    # 8
+    - [-1, 1, conv3x3, [256, 512]]
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.ReLU]
+    # 9
+    - [-1, 1, conv3x3, [512, 512]]
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.ReLU]
+    # 10
+    - [-1, 1, conv3x3, [512, 512]]
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.ReLU]
+    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=16
+    # 11
+    - [-1, 1, conv3x3, [512, 512]]
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.ReLU]
+    # 12
+    - [-1, 1, conv3x3, [512, 512]]
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.ReLU]
+    # 13
+    - [-1, 1, conv3x3, [512, 512]]
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.ReLU]
+    
+    # in original VGG they have FC(512 * 7 * 7 -> 4096) here but i'm using GAP + FC(512 -> 4096)
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, nn.Linear, [512, 4096]]
+    - [-1, 1, nn.ReLU]
+    - [-1, 1, nn.Linear, [4096, 4096]]
+    - [-1, 1, nn.ReLU]
+    - [-1, 1, nn.Linear, [4096, 1000]]
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 224
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
+
+filter_from_wd: [gain] # filter bias and gain from wd
+# leaving gain param to apply proper init for the model
+init_gamma: 1.7 # value from NFNet paper for SiLU activation
