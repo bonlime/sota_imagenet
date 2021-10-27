@@ -5,7 +5,6 @@
 slightly larger, it also allows much greater flexibility than using separate class for each model
 """
 
-import random
 from loguru import logger
 from copy import deepcopy
 from collections import OrderedDict
@@ -56,8 +55,12 @@ class ScaledStdConv2d(nn.Conv2d):
         if coord_conv:
             in_chs += 2
         super().__init__(in_chs, out_chs, *args, **kwargs)
-        self.scale = gamma * self.weight[0].numel() ** -0.5  # gamma * 1 / sqrt(fan-in)
-        self.gain = nn.Parameter(torch.full((self.out_channels, 1, 1, 1), float(gain_init)))
+        # gamma * 1 / sqrt(fan-in). multiply by num heads to compensate for mean
+        self.scale = gamma * self.weight[0].numel() ** -0.5 * n_heads ** 0.5
+        if gain_init is not None:
+            self.gain = nn.Parameter(torch.full((self.out_channels, 1, 1, 1), float(gain_init)))
+        else:
+            self.register_buffer("gain", torch.ones(out_chs, 1, 1, 1)) # just a scalar
         self.gamma = gamma
         self.eps = eps
         self.n_heads = n_heads
@@ -65,8 +68,9 @@ class ScaledStdConv2d(nn.Conv2d):
         self.partial_conv = partial_conv and kwargs.get("padding", 0) == 1  # implement only for pad=1 for now
         if self.partial_conv:
             assert self.weight.shape[2:] == (3, 3), "Partial conv only supports 3x3 conv"
-        self.register_buffer("partial_mask", torch.zeros(1, 1, 1, 1))
-        self.register_buffer("coords", torch.zeros(1, 1, 1, 1))
+            self.register_buffer("partial_mask", torch.zeros(1, 1, 1, 1))
+        if coord_conv:
+            self.register_buffer("coords", torch.zeros(1, 1, 1, 1))
         self.coord_conv = coord_conv
 
     def forward(self, x):
@@ -139,7 +143,8 @@ class ScaledStdConv2d(nn.Conv2d):
 
 def scaled_conv3x3(in_chs, out_chs, padding=1, **extra_kwargs):
     """3x3 convolution with padding"""
-    return ScaledStdConv2d(in_chs, out_chs, kernel_size=3, padding=padding, bias=True, **extra_kwargs)
+    bias = extra_kwargs.pop("bias", True)
+    return ScaledStdConv2d(in_chs, out_chs, kernel_size=3, padding=padding, bias=bias, **extra_kwargs)
 
 
 def scaled_conv1x1(in_chs, out_chs, **extra_kwargs):
@@ -235,21 +240,34 @@ class VarEMA(nn.Module):
     """Normalize tensor var by EMA of running vars"""
 
     # in first experiments it was 0.999 but it blew up
-    def __init__(self, decay=0.99, use=True, per_channel=False):
+    def __init__(self, n_channels, use=True, decay=0.95, per_channel=False, eps=1e-4):
         super().__init__()
         self.decay = decay
         self.use = use
         self.per_channel = per_channel
-        self.register_buffer("std_ema", torch.tensor(1.0))
-        self.register_buffer("mean_ema", torch.tensor(1.0))
+        self.eps = eps
+        self.register_buffer("std_ema", torch.ones(1, n_channels, 1, 1))
+        self.register_buffer("mean_ema", torch.zeros(1, n_channels, 1, 1))
+        if use:
+            self.bn = nn.BatchNorm2d(n_channels, affine=False)
 
     def forward(self, x):
         with torch.no_grad():
-            std, mean = torch.std_mean(x)
-            self.std_ema = self.decay * self.std_ema + (1 - self.decay) * std
-            self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
+            # channel wise statistics
+            if self.training: # only record training stats
+                std, mean = torch.std_mean(x, dim=(0, 2, 3), keepdim=True)
+                self.std_ema = self.decay * self.std_ema + (1 - self.decay) * std
+                self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
         if self.use:
-            return x / self.std_ema
+            if self.training:
+                std = x.std(dim=(0, 2, 3), keepdim=True) # .mean().cpu().item()
+                # like in Batch ReNormalization. this doesn't actually help with problems during backward
+                # need manual backward as in MABN
+                with torch.no_grad(): 
+                    r = (std / self.std_ema).clamp(1/5, 5)
+                return x / (std + self.eps) * r
+            else:
+                return x / self.std_ema
         else:  # needed to monitor running variance during training without any changes to the network
             return x
 
@@ -329,7 +347,7 @@ class XCA_mod(nn.Module):
     This could be viewed as dynamic 1x1 convolution
     """
 
-    def __init__(self, dim, num_heads=8, attn_drop=0.0, proj_drop=0.0):
+    def __init__(self, dim, num_heads=8, attn_drop=0.0, proj_drop=0.0, residual=True):
         super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
@@ -337,6 +355,8 @@ class XCA_mod(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = scaled_conv1x1(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
+        # maybe want to have residual outside the class
+        self.residual = residual
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -358,7 +378,7 @@ class XCA_mod(nn.Module):
         x_out = self.proj(x_out)
         x_out = self.proj_drop(x_out)
         # in original paper there is no residual here
-        return x + x_out
+        return x + x_out if self.residual else x_out
 
     def load_state_dict(self, state_dict):
         # to allow loading from Linear layer
@@ -369,6 +389,87 @@ class XCA_mod(nn.Module):
             else:
                 new_sd[k] = v
         super().load_state_dict(new_sd)
+
+
+class VGGBlock(nn.Module):
+    """act - norm - conv (no residual). Would this even work?"""
+
+    def __init__(
+        self,
+        in_chs,
+        out_chs,
+        groups_width=None,
+        activation="relu",
+        # like in Partial Residual defines which part of the output would receive residual
+        # only 0.5 is supported for now
+        conv_kwargs=None,
+        # attn_kwargs=None,
+        pre_norm=None,
+    ):
+        super().__init__()
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+        groups = max(in_chs // groups_width, 1) if groups_width else 1
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
+        conv_kwargs["groups"] = groups
+        # maybe actually could use inplace here, it shouldn't matter
+        self.block = nn.Sequential(
+            pre_norm if pre_norm else nn.Identity(),
+            activation_from_name(activation, inplace=False),
+            scaled_conv3x3(in_chs, out_chs, **conv_kwargs),
+            ChannelShuffle(groups) if groups != 1 else nn.Identity(),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+class ConvMixBlock(nn.Module):
+    """Here we go again. Another day another module. Would be close to ConvActBlock but with other 
+    parameters, don't want to clutter and create one large class"""
+
+    def __init__(
+        self,
+        in_chs,
+        out_chs,
+        groups_width=None,
+        activation="relu",
+        # like in Partial Residual defines which part of the output would receive residual
+        # only 0.5 is supported for now
+        partial_factor=1.0,
+        conv_kwargs=None,
+        # attn_kwargs=None,
+        pre_norm=None,
+    ):
+        super().__init__()
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+        self.n_common_chs = min(in_chs, out_chs)
+        groups = max(in_chs // groups_width, 1) if groups_width else 1
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
+        conv_kwargs["groups"] = groups
+        self.pre_norm = pre_norm if pre_norm else nn.Identity()
+        self.conv = scaled_conv3x3(in_chs, out_chs, **conv_kwargs)
+        self.shuffle = ChannelShuffle(groups) if groups != 1 else nn.Identity()
+        # maybe actually could use inplace here, it shouldn't matter
+        self.act = activation_from_name(activation, inplace=False)
+        assert partial_factor in {0, 0.5, 1}, "only {0, 0.5, 1} is supported as partial factor"
+        self.partial_factor = partial_factor
+
+    def forward(self, x):
+        out = self.act(x)
+        out = self.pre_norm(out)
+        out = self.shuffle(self.conv(out))
+        
+        if self.partial_factor == 1:
+            out[:, :self.n_common_chs] = out[:, :self.n_common_chs] + x[:, :self.n_common_chs]
+        elif self.partial_factor == 0:
+            # no residual
+            out = out
+        elif self.partial_factor == 0.5:
+            res_chs = int(self.n_common_chs * 0.5)
+            out[:, :res_chs] = out[:, :self.res_chs] + x[:, :self.res_chs]
+        # out = self.attn(out)
+        return out
 
 
 class ConvActBlock(nn.Module):
@@ -384,6 +485,7 @@ class ConvActBlock(nn.Module):
         activation="relu",
         conv_kwargs=None,
         attn_kwargs=None,
+        pre_norm=None,
     ):  # , keep_prob=1):
         super().__init__()
         self.in_chs = in_chs
@@ -391,6 +493,7 @@ class ConvActBlock(nn.Module):
         groups = max(in_chs // groups_width, 1) if groups_width else groups
         conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
         conv_kwargs["groups"] = groups
+        self.pre_norm = pre_norm if pre_norm else None
         self.res_downscale = BlurPool(in_chs) if stride == 2 else nn.Identity()
         self.conv = scaled_conv3x3(in_chs, out_chs, stride=stride, **conv_kwargs)
         self.shuffle = ChannelShuffle(groups) if groups != 1 else nn.Identity()
@@ -399,7 +502,10 @@ class ConvActBlock(nn.Module):
         self.attn = XCA_mod(dim=out_chs, **attn_kwargs) if attn_kwargs is not None else nn.Identity()
 
     def forward(self, x):
-        out = self.shuffle(self.conv(x))
+        x_block = x
+        if self.pre_norm:
+            x_block = self.pre_norm(x_block)
+        out = self.shuffle(self.conv(x_block))
         res = self.res_downscale(x)
         if self.in_chs == self.out_chs:
             out += res
