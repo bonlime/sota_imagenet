@@ -1,0 +1,138 @@
+# @package _global_
+
+# moving from NFNet to pure VGG-like architecture. 
+# conv -> act -> norm
+
+
+# first run 
+# [10-22 08:46:28] - Train loss: 3.4168 | Acc@1: 55.6212 | Acc@5: 76.4978                                                                                                           │··············
+# [10-22 08:46:28] - Val   loss: 7.7599 | Acc@1: 0.2200 | Acc@5: 0.9120                                                                                                             │··············
+# [10-22 08:46:28] - Model params: 6.92M                                                                                                                                            │··············
+# [10-22 08:46:28] - Acc@1 0.220 Acc@5 0.912                                                                                                                                        │··············
+# [10-22 08:46:28] - Total time: 15h 47.1m                                                                                                                                          
+# for some reason results on train are much better than on test. Maybe due to BN giving too large shift? 
+
+# run 2. replacing BN with VarEMA fails to converge and diverges in first 100 steps
+# but using idea from Batch ReNormalization ( x / std_batch * no_grad( std_batch / std_ema)) seems to converge. let's check if it really works
+# upd. catches NaN at 2nd epoch. added warm-up and restarted, let's check if it would help
+# upd2. still doesn't really train. after 3 epochs loss when lr hits max 0.3 value loss stagnates at 5.5 level....
+# looks like network is fighting really hard in attempts not to diverge
+
+# [10-22 09:50:34] - Train loss: 6.7069 | Acc@1: 0.9191 | Acc@5: 3.3264  
+# [10-22 09:50:34] - Val   loss: 6.0922 | Acc@1: 3.5360 | Acc@5: 11.0500                                                     
+# [10-22 09:50:34] - Epoch 2 | lr 5.08e-02                                                                                                                                                    
+# [10-22 10:02:54] - Train loss: 6.0216 | Acc@1: 5.7608 | Acc@5: 15.6177                           
+# [10-22 10:02:54] - Val   loss: 5.0659 | Acc@1: 14.2820 | Acc@5: 32.1800                                                                                                                
+# [10-22 10:02:54] - Epoch 3 | lr 1.50e-01                                                                                       
+# [10-22 10:15:14] - Train loss: 5.5440 | Acc@1: 11.9892 | Acc@5: 27.4705                                
+# [10-22 10:15:14] - Val   loss: 4.6859 | Acc@1: 19.7440 | Acc@5: 40.9740
+# [10-22 10:15:14] - Epoch 4 | lr 2.50e-01                                                                         
+# [10-22 10:27:33] - Train loss: 5.5015 | Acc@1: 12.6615 | Acc@5: 28.6825                                                                                                                          
+# [10-22 10:27:33] - Val   loss: 4.6890 | Acc@1: 19.7900 | Acc@5: 40.9060                                
+# [10-22 10:27:33] - Epoch 5 | lr 3.00e-01                                                                         
+# [10-22 10:39:54] - Train loss: 5.5022 | Acc@1: 12.6964 | Acc@5: 28.7210
+# [10-22 10:39:54] - Val   loss: 4.7009 | Acc@1: 19.5840 | Acc@5: 40.9520                                                    
+# [10-22 10:39:54] - Epoch 6 | lr 3.00e-01                                                                                   
+# [10-22 10:52:13] - Train loss: 5.5028 | Acc@1: 12.6387 | Acc@5: 28.7001                                                                                                                     
+# [10-22 10:52:13] - Val   loss: 4.6704 | Acc@1: 19.9560 | Acc@5: 41.2660                          
+
+# run3. changed lr to 0.1, let's check if it would help to converge. maybe 0.3 is really too much
+# + added clipping of std_batch / std_ema (as in Batch Re-Norm) with such settings it at least somehow trains...
+
+# at least trains. performance is still very far from garbage. 
+# [10-23 04:39:06] - Epoch 90 | lr 7.33e-05
+# [10-23 04:50:46] - Train loss: 3.4710 | Acc@1: 54.7595 | Acc@5: 75.7495
+# [10-23 04:50:46] - Val   loss: 2.9254 | Acc@1: 55.1640 | Acc@5: 78.2940
+# [10-23 04:50:46] - Model params: 6.92M
+# [10-23 04:50:46] - Acc@1 55.164 Acc@5 78.294
+# [10-23 04:50:46] - Total time: 17h 55.7m
+
+defaults:
+  - /base@_here_
+  
+log:
+  # exp_name: nf-conv-act_repeat
+  exp_name: conv-mixer_ema-var #_adaml
+  histogram: True
+  print_model: True
+
+model:
+  _target_: sota_imagenet.model.CModel
+  extra_kwargs:
+    ConvActBlock:
+      activation: "'swish_hard'"
+      # activation: "'selu'"
+      conv_kwargs:
+        gamma: "${init_gamma}"
+        gain_init: 0.1
+        n_heads: 1
+    VarEMA:
+      use: False
+
+  layer_config:
+    # residual starts from the very firt layer. 
+    # larger gain during first channel increase for faster convergence during training
+    - [-1, 1, pt.modules.SpaceToDepth, 8]
+    - [-1, 1, scaled_conv1x1, [192, 128], {gamma: "${init_gamma}"}] # 8 * 8 * 3 = 192
+    - [-1, 1, torch.nn.Hardswish]
+      # stage 1
+    # - [-1, 4, ConvActBlock, [128, 128], {pre_norm: "nn.BatchNorm2d(128, affine=False)"}]
+    # - [-1, 1, ConvActBlock, [128, 384], {pre_norm: "nn.BatchNorm2d(128, affine=False)"}]
+    - [-1, 4, ConvActBlock, [128, 128], {pre_norm: "VarEMA(128)"}]
+    - [-1, 1, ConvActBlock, [128, 384], {pre_norm: "VarEMA(128)"}]
+    - [-1, 1, VarEMA, 384]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # OS=16
+      # stage 2
+    # - [-1, 12, ConvActBlock, [384, 384], {pre_norm: "nn.BatchNorm2d(384, affine=False)", groups_width: 64}]
+    - [-1, 12, ConvActBlock, [384, 384], {pre_norm: "VarEMA(384)", groups_width: 64}]
+    - [-1, 1, VarEMA, 384]
+      # stage head
+    - [-1, 1, scaled_conv1x1, [384, 2304], {gamma: "${init_gamma}"}]
+    - [-1, 1, torch.nn.Hardswish]
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, torch.nn.Dropout, [0.2]]
+    - [-1, 1, nn.Linear, [2304, 1000]]
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# optim:
+#   # in PyTorch implementation weight decay is lr * wd, so 0.1 == 1e-4 as in AdamW paper
+#   _target_: src.optimizers.AdamLayerwise
+#   weight_decay: 1e-2
+#   betas: [0.9, 0.995]
+#   lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 224
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
+
+filter_from_wd: [gain] # filter bias and gain from wd
+init_gamma: 1.7 # value from NFNet paper for SiLU activation

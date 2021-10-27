@@ -1,0 +1,48 @@
+# @package _global_
+
+# attempt to train vanilla VGG-16 architecture from torchvision and check the results
+
+defaults:
+  - /base@_here_
+  
+log:
+  exp_name: vgg-vanilla
+  histogram: True
+  print_model: True
+
+model:
+  _target_: timm.models.vgg16_bn
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 224
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
