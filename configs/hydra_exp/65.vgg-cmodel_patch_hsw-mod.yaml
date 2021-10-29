@@ -1,0 +1,153 @@
+# @package _global_
+
+# VGG-like using CModel constructor
+# + GAP like in exp62
+# + space2depth (block size = 8) like in ConvMixer
+#   + first conv: conv3x3(3, 64) -> conv1x1(192, 64)
+#   + first 3 maxpools are removed
+# + hard-swish activation
+# + no dimensionality reduction in first conv
+
+# exp64. still has much worse performance than 62. hypothesis is that it happens due to huge increase in variance. how to fix it? don't know((
+# VGG with WS instead of BN and proper initialization 
+# VarEMA still has problems with convergence. Maybe we need learnable parameter in it, to compensate for normalization? 
+
+defaults:
+  - /base@_here_
+  
+log:
+  exp_name: vgg-cmodel_patch-hsw_no-BN_VarEMA-off
+  histogram: True
+  print_model: True
+
+model:
+  _target_: sota_imagenet.model.CModel
+  extra_kwargs:
+    scaled_conv1x1:
+      gamma: ${init_gamma}
+    scaled_conv3x3:
+      gamma: ${init_gamma}
+    VarEMA:
+      use: False # True
+
+  layer_config:
+    # VGG16: [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    # 1
+    - [-1, 1, pt.modules.SpaceToDepth, 8]
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv1x1, [192, 64]]
+    # - [-1, 1, nn.BatchNorm2d, 64]
+    - [-1, 1, nn.Hardswish]
+    # 2
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [64, 64]]
+    # - [-1, 1, nn.BatchNorm2d, 64]
+    - [-1, 1, nn.Hardswish]
+    # # - [-1, 1, nn.MaxPool2d, [2, 2]] # os=2
+    # # 3
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [64, 128]]
+    # - [-1, 1, nn.BatchNorm2d, 128]
+    - [-1, 1, nn.Hardswish]
+    # # 4
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [128, 128]]
+    # - [-1, 1, nn.BatchNorm2d, 128]
+    - [-1, 1, nn.Hardswish]
+    # # - [-1, 1, nn.MaxPool2d, [2, 2]] # os=4
+    # # 5
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [128, 256]]
+    # - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, nn.Hardswish]
+    # # 6
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [256, 256]]
+    # - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, nn.Hardswish]
+    # # 7
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [256, 256]]
+    # - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, nn.Hardswish]
+    # # - [-1, 1, nn.MaxPool2d, [2, 2]] # os=8
+    # # 8
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [256, 512]]
+    # - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.Hardswish]
+    # # 9
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [512, 512]]
+    # - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.Hardswish]
+    # # 10
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [512, 512]]
+    # - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=16
+    # # 11
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [512, 512]]
+    # - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.Hardswish]
+    # # 12
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [512, 512]]
+    # - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.Hardswish]
+    # 13
+    - [-1, 1, VarEMA]
+    - [-1, 1, scaled_conv3x3, [512, 512]]
+    # - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.Hardswish]
+    
+    # in original VGG they have FC(512 * 7 * 7 -> 4096) here but i'm using GAP + FC(512 -> 4096)
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, VarEMA]
+    - [-1, 1, nn.Linear, [512, 4096]]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, VarEMA]
+    - [-1, 1, nn.Linear, [4096, 4096]]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, VarEMA]
+    - [-1, 1, nn.Linear, [4096, 1000]]
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 224
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
+
+filter_from_wd: [gain] # filter bias and gain from wd
+# leaving gain param to apply proper init for the model
+init_gamma: 1.7 # value from NFNet paper for SiLU activation
