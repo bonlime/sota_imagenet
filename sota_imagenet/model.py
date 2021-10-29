@@ -235,32 +235,49 @@ class Gain(nn.Module):
     def extra_repr(self) -> str:
         return f"{self.size}"
 
+class FRN(nn.Module):
+    """Inspired by Feature Responce Normalization"""
+    def __init__(self, num_features, eps=1e-5, momentum=0.95):
+        self.register_parameter("weight", nn.Parameter(torch.ones(1, num_features, 1, 1)))
+        self.register_parameter("bias", nn.Parameter(torch.zeros(1, num_features, 1, 1)))
+        # it's called running var, but in fact this is running RMS
+        self.register_buffer("running_var", torch.ones(1, num_features, 1, 1))
+        self.momentum = momentum
+        self.eps = eps
+
+    def forward(self, x):
+        if self.training:
+            x2 = x.pow(2).mean(dim=(0, 2, 3), keepdim=True)
+            x = x / (x2 + self.eps).sqrt()
+            with torch.no_grad():
+                self.running_var = self.running_var * self.momentum + x2 * (1 - self.momentum)
+            return x
+        else:
+            return x * (self.running_var + self.eps).rsqrt()
+
 
 class VarEMA(nn.Module):
     """Normalize tensor var by EMA of running vars"""
 
     # in first experiments it was 0.999 but it blew up
-    def __init__(self, n_channels, use=True, decay=0.95, per_channel=False, eps=1e-4):
+    def __init__(self, use=True, decay=0.95, per_channel=False, eps=1e-4):
         super().__init__()
         self.decay = decay
         self.use = use
         self.per_channel = per_channel
         self.eps = eps
-        self.register_buffer("std_ema", torch.ones(1, n_channels, 1, 1))
-        self.register_buffer("mean_ema", torch.zeros(1, n_channels, 1, 1))
-        if use:
-            self.bn = nn.BatchNorm2d(n_channels, affine=False)
+        self.register_buffer("std_ema", torch.ones(1)) #, n_channels, 1, 1))
+        self.register_buffer("mean_ema", torch.zeros(1)) #, n_channels, 1, 1))
 
     def forward(self, x):
         with torch.no_grad():
             # channel wise statistics
             if self.training: # only record training stats
-                std, mean = torch.std_mean(x, dim=(0, 2, 3), keepdim=True)
+                std, mean = torch.std_mean(x) # dim=(0, 2, 3)
                 self.std_ema = self.decay * self.std_ema + (1 - self.decay) * std
                 self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
         if self.use:
             if self.training:
-                std = x.std(dim=(0, 2, 3), keepdim=True) # .mean().cpu().item()
                 # like in Batch ReNormalization. this doesn't actually help with problems during backward
                 # need manual backward as in MABN
                 with torch.no_grad(): 
@@ -271,6 +288,21 @@ class VarEMA(nn.Module):
         else:  # needed to monitor running variance during training without any changes to the network
             return x
 
+class FeatureResponceNorm(nn.Module):
+    def __init__(self, num_features, decay=0.95, eps=1e-6):
+        self.register_buffer("nu_ema", torch.ones(1, num_features, 1, 1))
+        self.register_parameter("gamma", nn.Parameter(torch.ones(1, num_features, 1, 1)))
+        self.register_parameter("beta", nn.Parameter(torch.zeros(1, num_features, 1, 1)))
+        self.decay = decay
+        self.eps = eps
+
+    def forward(self, x):
+        nu2 = x.pow(2).mean(dim=(2, 3), keepdim=True)
+        x = x * nu2.rsqrt(nu2 + self.eps)
+        with torch.no_grad():
+            self.nu_ema = self.nu_ema * self.decay + nu2 * (1 - self.decay)
+            # TODO: multiply by nu_ema like in Batch ReNormalization
+        return x * self.gamma + self.beta
 
 class MeanEMA(nn.Module):
     """Center tensor by EMA of running means per channel"""
@@ -805,14 +837,14 @@ class CModel(nn.Module):
             saved_outputs.append(x if layer.idx in self.saved else None)
         return x
 
-    def load_state_dict(self, state_dict, **kwargs):
-        valid_weights = []
-        for key, value in state_dict.items():
-            if "num_batches_tracked" in key:
-                continue
-            valid_weights.append(value)
-        new_sd = OrderedDict(zip(self.state_dict().keys(), valid_weights))
-        super().load_state_dict(new_sd, **kwargs)
+    # def load_state_dict(self, state_dict, **kwargs):
+    #     valid_weights = []
+    #     for key, value in state_dict.items():
+    #         if "num_batches_tracked" in key:
+    #             continue
+    #         valid_weights.append(value)
+    #     new_sd = OrderedDict(zip(self.state_dict().keys(), valid_weights))
+    #     super().load_state_dict(new_sd, **kwargs)
 
 
 # layer_config = [
@@ -909,3 +941,5 @@ class CModel(nn.Module):
 # inp = torch.rand(16, 3, 224, 224).cuda()
 
 # model(inp).shape
+
+# copied from original implementation of PowerNorm but significantly simplified
