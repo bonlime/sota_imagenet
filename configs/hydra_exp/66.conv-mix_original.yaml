@@ -1,0 +1,60 @@
+# @package _global_
+
+# original ConvMixer model without any modifications
+
+defaults:
+  - /base@_here_
+  
+log:
+  exp_name: conv-mix_original
+  histogram: True
+  print_model: True
+
+model:
+  _target_: sota_imagenet.model.CModel
+  layer_config:
+    - [-1, 1, nn.Conv2d, [3, 768, 7], {stride: 7}]
+    - [-1, 1, nn.GELU]
+    - [-1, 1, nn.BatchNorm2d, 768]
+    - [-1, 30, ConvMixerBlock, [768, 7]]
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, nn.Linear, [768, 1000]]
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 48 # lower batch size for conv-mixer
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  batch_size: 125 # lower batch size for conv-mixer
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
+
+filter_from_wd: [gain] # filter bias and gain from wd
+# leaving gain param to apply proper init for the model
+init_gamma: 1.7 # value from NFNet paper for SiLU activation

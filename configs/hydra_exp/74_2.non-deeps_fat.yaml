@@ -1,0 +1,89 @@
+# @package _global_
+
+# close to exp74
+# but using only 1 extra layer + increasing width to 192. Idea is that depth is > width in first stage
+# stoped this experiment and started run2
+
+# run2. no groups in first conv (maybe this would help to achieve same quality as with multiple convs here)
+# very close to exp74, maybe slightly slower. much better than variants with single conv. the fact that 2 convs
+# works same as 3 thin convs means that maybe depth > width. maybe 128 x 2 would work close to 192 x 2, but should be much faster
+# check exp74_4
+
+defaults:
+  - /base@_here_
+  
+log:
+  # exp_name: non-deep_zero_scaled
+  exp_name: non-deeps_fat-head_one-extra_no-gr
+
+  histogram: True
+  print_model: True
+
+model:
+  _target_: sota_imagenet.model.CModel
+  extra_kwargs:
+    NonDeepBlock:
+      norm: nn.BatchNorm2d
+      scaled: True
+
+  layer_config:
+    - [-1, 1, pt.modules.SpaceToDepth, 4] # os=4
+    # residual starts from the very first layer
+    - [-1, 1, NonDeepBlock, [48, 192]]
+    - [-1, 1, NonDeepBlock, [192, 192]] #, {groups_width: 64, fast_shuffle: null}]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=8
+    - [-1, 1, NonDeepBlock, [192, 256]]
+    - [-1, 2, NonDeepBlock, [256, 256]]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=16
+    - [-1, 1, NonDeepBlock, [256, 384]] # {groups_width: 64}
+    - [-1, 8, NonDeepBlock, [384, 384]] # {groups_width: 64}
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, nn.Linear, [384, 2048]]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.Linear, [2048, 2048]]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.Linear, [2048, 1000]]
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# optim:
+#   # in PyTorch implementation weight decay is lr * wd, so 0.1 == 1e-4 as in AdamW paper
+#   _target_: src.optimizers.AdamLayerwise
+#   weight_decay: 1e-2
+#   betas: [0.9, 0.995]
+#   lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 224
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
+
+filter_from_wd: [gain] # filter bias and gain from wd
+init_gamma: 1.7 # larger value to compensate for variance reduction after BlurPool
