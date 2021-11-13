@@ -9,9 +9,9 @@ from loguru import logger
 from copy import deepcopy
 from collections import OrderedDict
 from typing import List, Dict, Union
+from omegaconf import OmegaConf
 from dataclasses import dataclass, field
 from pytorch_tools.modules.pooling import BlurPool
-
 
 import torch
 import torch.nn as nn
@@ -19,7 +19,7 @@ import torch.nn.functional as F
 
 import pytorch_tools as pt
 from pytorch_tools.utils.misc import listify
-from pytorch_tools.modules.residual import XCA, conv1x1, conv3x3, DropConnect
+from pytorch_tools.modules.residual import XCA, SEVar3, conv1x1, conv3x3, DropConnect
 from pytorch_tools.modules import ABN
 from pytorch_tools.modules import activation_from_name
 from pytorch_tools.modules.residual import get_attn, XCA
@@ -191,6 +191,19 @@ class ChannelShuffle(nn.Module):
     def extra_repr(self):
         return f"groups={self.groups}"
 
+class ChannelShuffle_Fast(nn.Module):
+    """Roll channels dimension to compensate for groups"""
+
+    def __init__(self, groups_width=64):
+        super().__init__()
+        assert groups_width % 2 == 0
+        self.roll_shift = groups_width // 2
+
+    def forward(self, x: torch.Tensor):
+        return x.roll(shifts=self.roll_shift, dims=1)
+    
+    def extra_repr(self):
+        return f"groups_width={self.roll_shift * 2}"
 
 class ScaleNorm(nn.Module):
     def __init__(self, eps=1e-5, trainable=True):
@@ -235,11 +248,29 @@ class Gain(nn.Module):
     def extra_repr(self) -> str:
         return f"{self.size}"
 
-class FRN(nn.Module):
-    """Inspired by Feature Responce Normalization"""
-    def __init__(self, num_features, eps=1e-5, momentum=0.95):
+@torch.jit.script
+def frn_v1_train_forward(x, weight, bias, running_var, momentum: float, eps: float):
+    x2 = x.pow(2).mean(dim=(0, 2, 3), keepdim=True)
+    x = x * (x2 + eps).rsqrt()
+    with torch.no_grad():
+        running_var.lerp_(x2, 1 - momentum)
+        r = x2.add(eps).div_(running_var).sqrt_().clamp_(1/5, 5)
+    x = x * r # Re-Normalization, so that distribution is similar during training and testing
+    return x * weight + bias
+
+@torch.jit.script
+def frn_v1_val_forward(x, weight, bias, running_var, eps: float) -> torch.Tensor:
+    return x * (running_var + eps).rsqrt() * weight + bias
+
+
+class FRNv1(nn.Module):
+    def __init__(self, num_features, eps=1e-5, momentum=0.95, use_bias=True):
+        super().__init__()
         self.register_parameter("weight", nn.Parameter(torch.ones(1, num_features, 1, 1)))
-        self.register_parameter("bias", nn.Parameter(torch.zeros(1, num_features, 1, 1)))
+        if use_bias:
+            self.register_parameter("bias", nn.Parameter(torch.zeros(1, num_features, 1, 1)))
+        else:
+            self.register_buffer("bias", torch.zeros(1))
         # it's called running var, but in fact this is running RMS
         self.register_buffer("running_var", torch.ones(1, num_features, 1, 1))
         self.momentum = momentum
@@ -247,35 +278,89 @@ class FRN(nn.Module):
 
     def forward(self, x):
         if self.training:
-            x2 = x.pow(2).mean(dim=(0, 2, 3), keepdim=True)
-            x = x / (x2 + self.eps).sqrt()
-            with torch.no_grad():
-                self.running_var = self.running_var * self.momentum + x2 * (1 - self.momentum)
-            return x
+            return frn_v1_train_forward(x, self.weight, self.bias, self.running_var, self.momentum, self.eps)
         else:
-            return x * (self.running_var + self.eps).rsqrt()
+            return frn_v1_val_forward(x, self.weight, self.bias, self.running_var, self.eps)
+
+
+@torch.jit.script
+def frn_train_forward(x, weight, bias, single_running_var, running_var, momentum: float, eps: float):
+        x2_LN = x.pow(2).mean(dim=(1, 2, 3), keepdim=True)
+        x = x * (x2_LN + eps).rsqrt()
+        with torch.no_grad():
+            single_running_var.lerp_(x2_LN.mean(), 1 - momentum)
+            r_LN = x2_LN.add(eps).div_(single_running_var).sqrt_().clamp_(1/5, 5)
+        x = x * r_LN # Re-Normalization of LN, so that distribution is similar during training and testing
+
+            # apply IN after LN to get diverse features
+        x2_IN = x.pow(2).mean(dim=(2, 3), keepdim=True)
+        x = x * (x2_IN + eps).rsqrt()
+        with torch.no_grad():
+            # update running average with per-batch mean
+            running_var.lerp_(x2_IN.mean(dim=0), 1 - momentum)
+            r_IN = x2_IN.add(eps).div_(running_var).sqrt_().clamp_(1/5, 5)
+        x = x * r_IN
+        return x * weight + bias
+
+@torch.jit.script
+def frn_val_forward(x, weight, bias, single_running_var, running_var, eps: float) -> torch.Tensor:
+    return x * (single_running_var + eps).rsqrt() * (running_var + eps).rsqrt() * weight + bias
+
+
+class FRNv2(nn.Module):
+    """Inspired by Feature Responce Normalization.
+    v2
+    Using batch stats + Re-Normalization to compensate for smaller batch. 
+
+    Lines above are about v1 of this norm, it's not true anymore
+    Calcalute RMS for each instance feature map, but then renorm with running EMA of such features computed using batch
+    no batch dependance + free inference
+    """
+    def __init__(self, num_features, eps=1e-5, momentum=0.95):
+        super().__init__()
+        self.register_parameter("weight", nn.Parameter(torch.ones(1, num_features, 1, 1)))
+        self.register_parameter("bias", nn.Parameter(torch.zeros(1, num_features, 1, 1)))
+        self.register_buffer("single_running_var", torch.ones(1))
+        # it's called running var, but in fact this is running RMS
+        self.register_buffer("running_var", torch.ones(1, num_features, 1, 1))
+        self.momentum = momentum
+        self.eps = eps
+
+    # v2
+    # this version trains much worse
+    def forward(self, x):
+        if self.training:
+            return frn_train_forward(x, self.weight, self.bias, self.single_running_var, self.running_var, self.momentum, self.eps)
+        else:
+            return frn_val_forward(x, self.weight, self.bias, self.single_running_var, self.running_var, self.eps)
 
 
 class VarEMA(nn.Module):
     """Normalize tensor var by EMA of running vars"""
 
     # in first experiments it was 0.999 but it blew up
-    def __init__(self, use=True, decay=0.95, per_channel=False, eps=1e-4):
+    def __init__(self, n_channels, use=True, decay=0.95, per_channel=False, eps=1e-4):
         super().__init__()
         self.decay = decay
         self.use = use
         self.per_channel = per_channel
         self.eps = eps
-        self.register_buffer("std_ema", torch.ones(1)) #, n_channels, 1, 1))
-        self.register_buffer("mean_ema", torch.zeros(1)) #, n_channels, 1, 1))
+        self.register_buffer("std_ema", torch.ones(1, n_channels, 1, 1))
+        self.register_buffer("x2_ema", torch.zeros(1, n_channels, 1, 1))
+        self.register_buffer("mean_ema", torch.zeros(1, n_channels, 1, 1))
+
 
     def forward(self, x):
         with torch.no_grad():
             # channel wise statistics
             if self.training: # only record training stats
+                x2 = x.pow(2).mean(dim=(0, 2, 3), keepdim=True)
+                std, mean = torch.std_mean(x, dim=(0, 2, 3), keepdim=True)
                 std, mean = torch.std_mean(x) # dim=(0, 2, 3)
                 self.std_ema = self.decay * self.std_ema + (1 - self.decay) * std
                 self.mean_ema = self.decay * self.mean_ema + (1 - self.decay) * mean
+                self.x2_ema = self.decay * self.x2_ema + (1 - self.decay) * x2
+
         if self.use:
             if self.training:
                 # like in Batch ReNormalization. this doesn't actually help with problems during backward
@@ -455,6 +540,66 @@ class VGGBlock(nn.Module):
     def forward(self, x):
         return self.block(x)
 
+class SEVar3_Mod(nn.Module):
+    """Variant of SE module from ECA paper which doesn't have dimensionality reduction
+    _Mod also supports different number of in / out channels. This is supported using the same hack
+    as in partial residual
+    """
+
+    def __init__(self, in_chs, out_chs, scaled=False):
+        super().__init__()
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+        if in_chs != out_chs:
+            return
+        self.pool = pt.modules.FastGlobalAvgPool2d()
+        kwarg = {} if scaled else dict(bias=True)
+        self.fc1 = (scaled_conv1x1 if scaled else conv1x1)(in_chs, out_chs, **kwarg)
+
+    def forward(self, x):
+        if self.in_chs != self.out_chs:
+            return 0
+        
+        se = self.fc1(self.pool(x)).sigmoid()
+        return x * se
+        # if self.in_chs == self.out_chs:
+            # return x * se
+        # elif self.in_chs < self.out_chs:
+            # return 0 # no SE in expansion
+            # se[:, :self.in_chs] *= x
+        #     return se
+        # else:
+        #     x[:, :self.out_chs] *= se
+        #     return x
+
+
+class NonDeepBlock(nn.Module):
+    """Block inspired with Non-Deep Residual Networks"""
+    def __init__(self, in_chs, out_chs, groups_width=None, conv_kwargs=None, scaled=False, norm=nn.BatchNorm2d, fast_shuffle=False):
+        super().__init__()
+        self.norm = norm(in_chs)
+        groups = max(in_chs // groups_width, 1) if groups_width else 1
+        conv_kwargs = dict() if conv_kwargs is None else conv_kwargs
+        conv_kwargs["groups"] = groups
+        self.c1 = (scaled_conv1x1 if scaled else conv1x1)(in_chs, out_chs, **conv_kwargs)
+        self.c3 = (scaled_conv3x3 if scaled else conv3x3)(in_chs, out_chs, **conv_kwargs)
+        self.act = nn.Hardswish()
+        # don't use SE if in_chs != out_chs
+        self.se = SEVar3_Mod(in_chs, out_chs, scaled)
+        if groups == 1 or fast_shuffle is None:
+            self.shuffle = nn.Identity()
+        else:
+            self.shuffle = ChannelShuffle_Fast(groups_width) if fast_shuffle else ChannelShuffle(groups)
+        self.in_chs = in_chs
+        self.out_chs = out_chs
+
+    def forward(self, x):
+        x_norm = self.norm(x)
+        out = self.c1(x_norm) + self.c3(x_norm) + self.se(x_norm)
+        out = self.shuffle(out)
+        out = self.act(out)
+        return out
+        
 class ConvMixBlock(nn.Module):
     """Here we go again. Another day another module. Would be close to ConvActBlock but with other 
     parameters, don't want to clutter and create one large class"""
@@ -518,6 +663,7 @@ class ConvActBlock(nn.Module):
         conv_kwargs=None,
         attn_kwargs=None,
         pre_norm=None,
+        sse=False,
     ):  # , keep_prob=1):
         super().__init__()
         self.in_chs = in_chs
@@ -532,6 +678,10 @@ class ConvActBlock(nn.Module):
         # maybe actually could use inplace here, it shouldn't matter
         self.act = activation_from_name(activation, inplace=False)
         self.attn = XCA_mod(dim=out_chs, **attn_kwargs) if attn_kwargs is not None else nn.Identity()
+        # very dirty :c
+        self.sse = sse and in_chs == out_chs
+        if self.sse:
+            self.sse_block = pt.modules.residual.SEVar3(out_chs)
 
     def forward(self, x):
         x_block = x
@@ -545,6 +695,8 @@ class ConvActBlock(nn.Module):
             out[:, : self.in_chs] += res
         out = self.act(out)
         out = self.attn(out)
+        # if self.sse:
+        #     out = out + self.sse_block()
         return out
 
 
@@ -712,6 +864,62 @@ class PreInvertedResidual(nn.Module):
             out[:, : self.in_chs] += x
         return out
 
+class ConvResidual(nn.Module):
+    def __init__(self, conv, *args, **kwargs):
+        super().__init__()
+        self.conv = conv(*args, **kwargs)
+        self.in_chs = self.conv.in_channels
+        self.out_chs = self.conv.out_channels
+
+    def forward(self, x):
+        out = self.conv(x)
+        if self.in_chs == self.out_chs:
+            out += x
+        elif self.out_chs > self.in_chs:
+            out[:, :self.in_chs] += x
+        else:
+            raise ValueError("in_chs > out_chs is not supported for now")
+        return out
+class Residual(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x) + x
+
+class ConvMixerBlock(nn.Sequential):
+    def __init__(self, dim, kernel_size):
+        layers = [
+            Residual(
+                nn.Sequential(
+                    nn.Conv2d(dim, dim, kernel_size, groups=dim, padding=3), # "same" doesn't work
+                    nn.GELU(),
+                    nn.BatchNorm2d(dim)
+                )
+            ),
+            nn.Conv2d(dim, dim, kernel_size=1),
+            nn.GELU(),
+            nn.BatchNorm2d(dim)
+        ]
+        super().__init__(*layers)
+                
+
+# def ConvMixer(dim, depth, kernel_size=9, patch_size=7, n_classes=1000):
+#     return nn.Sequential(
+#         nn.Conv2d(3, dim, kernel_size=patch_size, stride=patch_size),
+#         nn.GELU(),
+#         nn.BatchNorm2d(dim),
+#         *[ConvMixerBlock(dim, kernel_size) for _ in range(depth)],
+#         nn.AdaptiveAvgPool2d((1,1)),
+#         nn.Flatten(),
+#         nn.Linear(dim, n_classes)
+#     )
+
+# def convmixer_768_32(pretrained=False, **kwargs):
+#     model = ConvMixer(768, 32, kernel_size=7, patch_size=7, n_classes=1000)
+#     return model
+
 
 @dataclass
 class LayerDef:
@@ -783,6 +991,7 @@ class CModel(nn.Module):
         self.layers: nn.Module = layers
         self.saved: List[int] = saved
         self._patch_drop_path()
+        logger.info(f"Saved outputs: {self.saved}")
 
     def _patch_drop_path(self, drop_path_name="drop_path"):
         """DropPath works best when it linearly increased each block. Expects than drop_path layer is already created (by passing keep_prob"""
@@ -818,7 +1027,7 @@ class CModel(nn.Module):
             else:
                 m = nn.Sequential(*[l.module(*l.args, **l.kwargs) for _ in range(l.n)])
             # add some information about from/idx
-            m.prev_l = l.prev_l
+            m.prev_l = l.prev_l if isinstance(l.prev_l, int) else OmegaConf.to_container(l.prev_l)
             m.idx = l_idx
             layers.append(m)
             saved.extend(l_idx + i for i in listify(l.prev_l) if i != -1)
