@@ -1,0 +1,95 @@
+# @package _global_
+
+# close to exp72
+# + scaled conv
+
+# NOTE: this add learnable gamma in each conv in addition to gamma in BN! not sure how well do they interact
+# upd. works much-much better than exp72!
+# [11-11 09:29:38] - Epoch 90 | lr 7.33e-05
+# [11-11 09:37:30] - Train loss: 2.9181 | Acc@1: 67.1710 | Acc@5: 84.9105
+# [11-11 09:37:30] - Val   loss: 2.0014 | Acc@1: 73.7580 | Acc@5: 91.5020
+# [11-11 09:37:30] - Model params: 22.89M
+# [11-11 09:37:30] - Acc@1 73.758 Acc@5 91.502
+# [11-11 09:37:30] - Total time: 12h 16.6m
+# performance may be not over the top, but taking into account the speed it's not that bad
+
+# run2: don't use SE in expansion
+# after 15 epochs results are identical, so we can safely remove it for simplification
+
+defaults:
+  - /base@_here_
+  
+log:
+  # exp_name: non-deep_zero_scaled
+  exp_name: non-deep_zero_scaled_no-exp-se
+
+  histogram: True
+  print_model: True
+
+model:
+  _target_: sota_imagenet.model.CModel
+  extra_kwargs:
+    NonDeepBlock:
+      norm: nn.BatchNorm2d
+      scaled: True
+
+  layer_config:
+    - [-1, 1, pt.modules.SpaceToDepth, 4] # os=4
+    # residual starts from the very first layer
+    - [-1, 1, NonDeepBlock, [48, 96]]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=8
+    - [-1, 1, NonDeepBlock, [96, 256]]
+    - [-1, 2, NonDeepBlock, [256, 256]]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=16
+    - [-1, 1, NonDeepBlock, [256, 384]] # {groups_width: 64}
+    - [-1, 8, NonDeepBlock, [384, 384]] # {groups_width: 64}
+    - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
+    - [-1, 1, nn.Linear, [384, 2048]]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.Linear, [2048, 2048]]
+    - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.Linear, [2048, 1000]]
+
+# using default SGD
+optim:
+  _target_: torch.optim._multi_tensor.SGD
+  momentum: 0.9
+  weight_decay: 3e-5
+  lr: 0
+
+# optim:
+#   # in PyTorch implementation weight decay is lr * wd, so 0.1 == 1e-4 as in AdamW paper
+#   _target_: src.optimizers.AdamLayerwise
+#   weight_decay: 1e-2
+#   betas: [0.9, 0.995]
+#   lr: 0
+
+# use label smoothing
+criterion:
+  smoothing: 0.1
+
+loader:
+  image_size: 224
+  batch_size: 224
+  blur_prob: 0.2
+  gray_prob: 0.2
+  color_twist_prob: 0.4
+  re_prob: 0.3
+
+val_loader:
+  image_size: 288 # to test on the same resolution as timm
+
+run:
+  stages:
+    # SGD requires warmup
+    - {start: 0, end: 3, lr: [0.001, 0.1]}
+    - {start: 3, end: 90, lr: [0.1, 0], lr_mode: cos}
+
+  extra_callbacks:
+    - _target_: sota_imagenet.callbacks.CutmixMixup
+      cutmix_alpha: 1.0
+      mixup_alpha: 0.2
+      prob: 1.0
+
+filter_from_wd: [gain] # filter bias and gain from wd
+init_gamma: 1.7 # larger value to compensate for variance reduction after BlurPool

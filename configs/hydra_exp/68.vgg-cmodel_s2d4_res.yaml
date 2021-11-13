@@ -1,25 +1,32 @@
 # @package _global_
 
-# attempt to create VGG using CModel constructor. The only difference for now is using GAP at the end instead of FC
-# original VGG has 138.37M params. While using GAP we reduce number of params by: 512 * 4096 * (7 * 7 - 1) ~= 100M
-# this version uses GAP and have: 37.70M
-# Note: 4096 * (4096 + 1000 + 512) ~= 23M are in the model head. which means than feature-extractor part of VGG
-# has only 14M params which is half of R34 
-# upd. very promising results. Torchvision version has 100M params more and only Acc@1: 73.360  | Acc@5: 91.516. Which means
-# we could easily get even better results by training for longer
-# [10-27 04:08:37] - Train loss: 2.8107 | Acc@1: 68.5003 | Acc@5: 85.9886
-# [10-27 04:08:37] - Val   loss: 1.9763 | Acc@1: 75.4580 | Acc@5: 92.6140
-# [10-27 04:08:37] - Model params: 37.70M
-# [10-27 04:08:37] - Acc@1 75.458 Acc@5 92.614
-# [10-27 04:08:37] - Total time: 41h 17.1m
+# VGG using CModel
+# + HardSwish 
+# + AvgPool2d instead of MaxPool2d
+# + space2depth block size 4
+# + post-normalization
+# + all convs are wrapped in residual blocks
 
-# run2. replace ReLU with Hardswish
-# trains ~1% better but didn't really finish training
+# blyat' doesn't improve anything compared to model without residuals
+
+# run2. 
+# + add orthogonal initialization
+# + add last BN
+# + move pre-last BN from pre GAP to post-GAP
+# upd. slightly better convergence on val, but still very bad :c
+
+# run3.
+# revert run2 changes
+# + head width -> 2048 (like in ResNets) 
+# + dropout 0.2
+# gives 22M params
+# adding last BN again leads to very large variance and NaNs
+
 defaults:
   - /base@_here_
   
 log:
-  exp_name: vgg-cmodel_hswish
+  exp_name: vgg-cmodel_sd4_res_narrow-last-bn
   histogram: True
   print_model: True
 
@@ -32,69 +39,72 @@ model:
   layer_config:
     # VGG16: [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     # 1
-    - [-1, 1, conv3x3, [3, 64]]
-    - [-1, 1, nn.BatchNorm2d, 64]
+    - [-1, 1, pt.modules.SpaceToDepth, 4]
+    - [-1, 1, ConvResidual, [conv3x3, 48, 64]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 64]
     # 2
-    - [-1, 1, conv3x3, [64, 64]]
+    - [-1, 1, ConvResidual, [conv3x3, 64, 64]]
+    - [-1, 1, nn.Hardswish]
     - [-1, 1, nn.BatchNorm2d, 64]
-    - [-1, 1, nn.Hardswish]
-    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=2
+    # - [-1, 1, nn.AvgPool2d, [2, 2]] # os=2
     # 3
-    - [-1, 1, conv3x3, [64, 128]]
-    - [-1, 1, nn.BatchNorm2d, 128]
+    - [-1, 1, ConvResidual, [conv3x3, 64, 128]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 128]
     # 4`
-    - [-1, 1, conv3x3, [128, 128]]
+    - [-1, 1, ConvResidual, [conv3x3, 128, 128]]
+    - [-1, 1, nn.Hardswish]
     - [-1, 1, nn.BatchNorm2d, 128]
-    - [-1, 1, nn.Hardswish]
-    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=4
+    # - [-1, 1, nn.AvgPool2d, [2, 2]] # os=4
     # 5
-    - [-1, 1, conv3x3, [128, 256]]
-    - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, ConvResidual, [conv3x3, 128, 256]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 256]
     # 6
-    - [-1, 1, conv3x3, [256, 256]]
-    - [-1, 1, nn.BatchNorm2d, 256]
+    - [-1, 1, ConvResidual, [conv3x3, 256, 256]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 256]
     # 7
-    - [-1, 1, conv3x3, [256, 256]]
+    - [-1, 1, ConvResidual, [conv3x3, 256, 256]]
+    - [-1, 1, nn.Hardswish]
     - [-1, 1, nn.BatchNorm2d, 256]
-    - [-1, 1, nn.Hardswish]
-    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=8
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=8
     # 8
-    - [-1, 1, conv3x3, [256, 512]]
-    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, ConvResidual, [conv3x3, 256, 512]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 512]
     # 9
-    - [-1, 1, conv3x3, [512, 512]]
-    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, ConvResidual, [conv3x3, 512, 512]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 512]
     # 10
-    - [-1, 1, conv3x3, [512, 512]]
-    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, ConvResidual, [conv3x3, 512, 512]]
     - [-1, 1, nn.Hardswish]
-    - [-1, 1, nn.MaxPool2d, [2, 2]] # os=16
+    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, nn.AvgPool2d, [2, 2]] # os=16
     # 11
-    - [-1, 1, conv3x3, [512, 512]]
-    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, ConvResidual, [conv3x3, 512, 512]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 512]
     # 12
-    - [-1, 1, conv3x3, [512, 512]]
-    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, ConvResidual, [conv3x3, 512, 512]]
     - [-1, 1, nn.Hardswish]
+    - [-1, 1, nn.BatchNorm2d, 512]
     # 13
-    - [-1, 1, conv3x3, [512, 512]]
-    - [-1, 1, nn.BatchNorm2d, 512]
+    - [-1, 1, ConvResidual, [conv3x3, 512, 512]]
     - [-1, 1, nn.Hardswish]
-    
+    - [-1, 1, nn.BatchNorm2d, 512]
     # in original VGG they have FC(512 * 7 * 7 -> 4096) here but i'm using GAP + FC(512 -> 4096)
     - [-1, 1, pt.modules.FastGlobalAvgPool2d, [], {flatten: True}]
-    - [-1, 1, nn.Linear, [512, 4096]]
+    # - [-1, 1, nn.BatchNorm1d, 512]
+    - [-1, 1, nn.Linear, [512, 2048]]
     - [-1, 1, nn.Hardswish]
-    - [-1, 1, nn.Linear, [4096, 4096]]
+    # - [-1, 1, nn.BatchNorm1d, 2048] # maybe replace this BN with FRN
+    - [-1, 1, nn.Linear, [2048, 2048]]
     - [-1, 1, nn.Hardswish]
-    - [-1, 1, nn.Linear, [4096, 1000]]
+    - [-1, 1, nn.Dropout, 0.2]
+    - [-1, 1, nn.Linear, [2048, 1000]]
 
 # using default SGD
 optim:
@@ -129,6 +139,8 @@ run:
       cutmix_alpha: 1.0
       mixup_alpha: 0.2
       prob: 1.0
+    # - _target_: sota_imagenet.callbacks.OrthoInitClb
+    #   gain: ${init_gamma}
 
 filter_from_wd: [gain] # filter bias and gain from wd
 # leaving gain param to apply proper init for the model

@@ -5,6 +5,8 @@
 # + AvgPool2d instead of MaxPool2d
 
 # run2. replace ReLU with Hardswish
+# trains almost the same as just hardswish but I believe it should be better
+# so leaving for now
 defaults:
   - /base@_here_
   
