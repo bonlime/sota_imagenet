@@ -1,12 +1,11 @@
 import torch
+import torch.nn as nn
 import numpy as np
 from loguru import logger
 from functools import partial
 
 import pytorch_tools as pt
 import pytorch_tools.fit_wrapper.callbacks as pt_clb
-from torch._C import device
-from torch.nn.modules.conv import Conv2d
 
 
 @pt_clb.rank_zero_only
@@ -75,14 +74,14 @@ class ForwardWeightNorm(pt_clb.Callback):
     def on_begin(self):
         for m in self.state.model.modules():
             # turn to ScaledStdConv only usual (not DW) convs
-            if isinstance(m, torch.nn.Conv2d) and m.groups == 1:
-                torch.nn.utils.parametrize.register_parametrization(m, "weight", self.func)
+            if isinstance(m, nn.Conv2d) and m.groups == 1:
+                nn.utils.parametrize.register_parametrization(m, "weight", self.func)
 
     def on_end(self):
         # remove parametrization. the weight's would be converted to parametrized version automatically
         for m in self.state.model.modules():
-            if torch.nn.utils.parametrize.is_parametrized(m):
-                torch.nn.utils.parametrize.remove_parametrizations(m, "weight")
+            if nn.utils.parametrize.is_parametrized(m):
+                nn.utils.parametrize.remove_parametrizations(m, "weight")
 
 
 class ForwardSpectralNorm(pt_clb.Callback):
@@ -92,14 +91,14 @@ class ForwardSpectralNorm(pt_clb.Callback):
         logger.info("Adding spectral norm parametrization for weights")
         # TODO: maybe add kaiming normal init here? or it shouldn't matter
         for m in self.state.model.modules():
-            if isinstance(m, torch.nn.Conv2d):
-                torch.nn.utils.parametrizations.spectral_norm(m)
+            if isinstance(m, nn.Conv2d):
+                nn.utils.parametrizations.spectral_norm(m)
 
     def on_end(self):
         # remove parametrization. the weight's would be converted to parametrized version automatically
         for m in self.state.model.modules():
-            if torch.nn.utils.parametrize.is_parametrized(m):
-                torch.nn.utils.parametrize.remove_parametrizations(m, "weight")
+            if nn.utils.parametrize.is_parametrized(m):
+                nn.utils.parametrize.remove_parametrizations(m, "weight")
 
 
 class WeightNorm(pt_clb.Callback):
@@ -137,7 +136,7 @@ class OrthoLoss(pt.losses.Loss):
     def forward(self, *args):
         loss = 0
         for n, m in self.model.named_modules():
-            if not isinstance(m, torch.nn.Conv2d):
+            if not isinstance(m, nn.Conv2d):
                 continue
             weight = m.parametrizations.weight.original if hasattr(m, "parametrizations") else m.weight
             mat = weight.view(weight.size(0), -1)
@@ -168,7 +167,7 @@ class OrthoLoss2(pt.losses.Loss):
     def forward(self, *args):
         total_loss = 0
         for n, m in self.model.named_modules():
-            if not isinstance(m, torch.nn.Conv2d) or m.stride == 2:
+            if not isinstance(m, nn.Conv2d) or m.stride == 2:
                 continue
             # if using spectral norm, regularize original weights to avoid gradient computation errors
             # maybe it's possible to apply loss to weighs after spectral norm but I don't know how :(
@@ -259,8 +258,11 @@ class OrthoInitClb(pt_clb.Callback):
             return
         logger.info("Applying orthogonal initialization")
         for m in self.state.model.modules():
-            if isinstance(m, torch.nn.Conv2d):
-                torch.nn.init.orthogonal_(m.weight, gain=self.gain)
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                try:
+                    nn.init.orthogonal_(m.weight, gain=self.gain)
+                except RuntimeError:
+                    logger.info(f"Couldn't apply ortho init. Tensor shape: {m.weight.shape}")
         self.has_been_init = True
 
 
@@ -333,6 +335,7 @@ class SAMOriginal(pt_clb.Callback):
                 pw = p.grad * p.abs().clamp_min_(self.eta) if p.ndim > 1 else p.grad
                 wgrads.append(pw.norm())
         return torch.stack(wgrads).norm().clamp_min(2e-5)
+
 class SAM(pt_clb.Callback):
     """
     Implements Sharpness-aware minimization [1] as Callback.
