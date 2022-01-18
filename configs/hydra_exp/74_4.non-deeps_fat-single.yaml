@@ -18,11 +18,14 @@
 
 # close to exp74 but much faster. leaving this experiment as baseline for the future 
 
+# run3: 
+# pass init_gamma to conv_kwargs
+
 defaults:
   - /base@_here_
   
 log:
-  exp_name: non-deeps_fat-head-same-width-single
+  exp_name: non-deeps_fat-head-same-width-single_init-gamma
 
   histogram: True
   print_model: True
@@ -33,6 +36,8 @@ model:
     NonDeepBlock:
       norm: nn.BatchNorm2d
       scaled: True
+      conv_kwargs:
+        gamma: ${init_gamma}
 
   layer_config:
     - [-1, 1, pt.modules.SpaceToDepth, 4] # os=4

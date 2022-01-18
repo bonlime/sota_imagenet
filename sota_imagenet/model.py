@@ -475,7 +475,7 @@ class XCA_mod(nn.Module):
     This could be viewed as dynamic 1x1 convolution
     """
 
-    def __init__(self, dim, num_heads=8, attn_drop=0.0, proj_drop=0.0, last_proj=False, residual=True):
+    def __init__(self, dim, num_heads=8, attn_drop=0.0, proj_drop=0.0, last_proj=False, residual=True, v_norm=False):
         super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
@@ -487,6 +487,10 @@ class XCA_mod(nn.Module):
             self.proj = nn.Identity()
         # maybe want to have residual outside the class
         self.residual = residual
+        self.v_norm = v_norm
+        if v_norm:
+            self.temperature2 = nn.Parameter(torch.ones(num_heads, 1, 1))
+
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -502,8 +506,13 @@ class XCA_mod(nn.Module):
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
+        if self.v_norm:
+            v_hat = F.normalize(v, dim=-2) * self.temperature2
+        else:
+            v_hat = v
+            
         # B x Hd x C` x C` @ B x Hd x C` x H*W -> B x C x H x W
-        x_out = (attn @ v).reshape(B, C, H, W)
+        x_out = (attn @ v_hat).reshape(B, C, H, W)
         x_out = self.proj(x_out)
         # in original paper there is no residual here
         return x + x_out if self.residual else x_out
@@ -525,20 +534,24 @@ class UFO_mod(nn.Module):
         UFO-ViT: High Performance Linear Vision Transformer without Softmax
     """
 
-    def __init__(self, dim, num_heads=8, attn_drop=0.0, proj_drop=0.0, last_proj=False, residual=True):
+    def __init__(self, dim, out_dim=None, num_heads=8, attn_drop=0.0, proj_drop=0.0, last_proj=False, residual=True, qk_norm=False, prelast_act=False):
         super().__init__()
+        out_dim = out_dim or dim
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
         self.temperature2 = nn.Parameter(torch.ones(num_heads, 1, 1))
-        self.qkv = scaled_conv1x1(dim, dim * 3)
+        # self.qkv = scaled_conv1x1(dim, dim * 3)
+        self.qkv = conv1x1(dim, dim * 3, bias=True)
         self.attn_drop = nn.Dropout(attn_drop)
         if last_proj:
-            self.proj = nn.Sequential(scaled_conv1x1(dim, dim), nn.Dropout(proj_drop))
+            self.proj = nn.Sequential(scaled_conv1x1(dim, out_dim), nn.Dropout(proj_drop))
         else:
             self.proj = nn.Identity()
 
         # maybe want to have residual outside the class
         self.residual = residual
+        self.qk_norm = qk_norm
+        self.prelast_act = nn.Hardswish() if prelast_act else nn.Identity()
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -546,14 +559,30 @@ class UFO_mod(nn.Module):
         # B x C x H x W -> B x 3*C x H x W -> B x 3 x Hd x C` x H*W -> [ B x Hd x C` x H*W, ] * 3
         q, k, v = self.qkv(x).reshape(B, 3, self.num_heads, C // self.num_heads, -1).unbind(dim=1)
 
+        # I tried this but it doesn't work. leaving for historical reasons only
+        # it gives same accuracy while being slightly slower
+        # if self.prenorm:
+        #     # this is my idea (not really UFO attention anymore). I believe it's more important to normalize before softmax
+        #     q_hat = F.normalize(q, dim=-1)
+        #     k_hat = F.normalize(k, dim=-1)
+        #     attn = (q_hat @ k_hat.transpose(-2, -1)) * self.temperature
+
         # -> B x Hd x C` x C`
-        # NOTE: not really sure that normalize dimensions are correct
-        # using -2, -1 failed. let's try to use -1, -2
+        if self.qk_norm:
+            # to avoid overfloat with amp for large feature maps need to normalize k,v before matmul
+            # idea is similar to 1 / d_k ** 0.5 in original transformer
+            q = q.div(q.size(-1) ** 0.25)
+            k = k.div(k.size(-1) ** 0.25)
+
+        # from paper normalization dimensions are not clear but this seems correct (and works)
+        # changing norm dims to -2, -1 leads to nan during training
         attn = F.normalize(q @ k.transpose(-2, -1), dim=-1) * self.temperature
         v_hat = F.normalize(v, dim=-2) * self.temperature2
 
         # B x Hd x C` x C` @ B x Hd x C` x H*W -> B x C x H x W
         x_out = (attn @ v_hat).reshape(B, C, H, W)
+
+        x_out = self.prelast_act(x_out)
         x_out = self.proj(x_out)
         # optional residual
         return x + x_out if self.residual else x_out
@@ -644,6 +673,7 @@ class NonDeepBlock(nn.Module):
         use_conv3=True,
         xca_kwargs=None,
         ufo_kwargs=None,
+        se_kwargs=dict(),
     ):
         super().__init__()
         self.norm = norm(in_chs)
@@ -661,7 +691,9 @@ class NonDeepBlock(nn.Module):
             assert in_chs == out_chs, f"XCA requires in_chs ({in_chs}) == out_chs ({out_chs})"
             self.se = XCA_mod(dim=out_chs, **xca_kwargs)
         elif ufo_kwargs is not None:
-            self.se = UFO_mod(dim=out_chs, **ufo_kwargs)
+            self.se = UFO_mod(dim=in_chs, out_dim=out_chs, **ufo_kwargs)
+        elif se_kwargs is None or in_chs != out_chs:
+            self.se = None
         else:
             self.se = SEVar3_Mod(in_chs, out_chs, scaled)
         self.shuffle = nn.Identity() if (groups == 1 or not shuffle) else ChannelShuffle(groups)
@@ -672,8 +704,18 @@ class NonDeepBlock(nn.Module):
             assert in_chs <= out_chs, "dimension reduction is not supported in this block with `residual=True`"
 
     def forward(self, x):
+        # Debug only!
+        # if self.se is None:
+        #     return self.c3(x)
+        # else:
+        #     return self.c3(x) + self.se(x)
+
         x_norm = self.norm(x)
-        out = self.c1(x_norm) + self.c3(x_norm) + self.se(x_norm)
+        if self.se is None:
+            out = self.c1(x_norm) + self.c3(x_norm)
+        else:
+            out = self.c1(x_norm) + self.c3(x_norm) + self.se(x_norm)
+
         if self.residual:
             if self.in_chs == self.out_chs:
                 out = out + x
@@ -683,6 +725,50 @@ class NonDeepBlock(nn.Module):
         out = self.act(out)
         return out
 
+class Yolo5_C3(nn.Module):
+    """
+    Class inspired by C3 block from Yolov5 but i'm using NonDeepblocks instead of conv1x1 -> conv3x3 to make it even faster
+    This could be explained as CSP Bottleneck with 3 convolutions
+
+    """
+    def __init__(self, in_chs, num_blocks=1, pre_norm=False, block_kwargs=dict(se_kwargs=None)):
+        super().__init__()
+        # i'm hardcoding expansion factor=0.5 here and using single conv + chunk for speed
+        # this also allows pre_norm option
+        if pre_norm:
+            self.cv1_2 = nn.Sequential(nn.BatchNorm2d(in_chs), scaled_conv1x1(in_chs, in_chs), nn.Hardswish())
+            self.cv3 = nn.Sequential(nn.BatchNorm2d(in_chs), scaled_conv1x1(in_chs, in_chs), nn.Hardswish())
+        else:
+            self.cv1_2 = nn.Sequential(scaled_conv1x1(in_chs, in_chs), nn.BatchNorm2d(in_chs), nn.Hardswish())
+            # self.cv1 = nn.Sequential(scaled_conv1x1(in_chs, in_chs // 2), nn.BatchNorm2d(in_chs // 2), nn.Hardswish())
+            # self.cv2 = nn.Sequential(scaled_conv1x1(in_chs, in_chs // 2), nn.BatchNorm2d(in_chs // 2), nn.Hardswish())
+
+            self.cv3 = nn.Sequential(scaled_conv1x1(in_chs, in_chs), nn.BatchNorm2d(in_chs), nn.Hardswish())
+
+        self.m = nn.Sequential(*(NonDeepBlock(in_chs // 2, in_chs // 2, **block_kwargs) for _ in range(num_blocks)))
+
+    def forward(self, x):
+        block_inp, res = self.cv1_2(x).chunk(2, dim=1)
+        return self.cv3(torch.cat([self.m(block_inp), res], dim=1))
+
+        return self.cv3(torch.cat([self.m(self.cv1(x)), self.cv2(x)], dim=1))
+
+class GEM_pool(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.register_parameter("p", nn.Parameter(torch.tensor(1.0)))
+
+    def forward(self, x):
+        # return x.mean(dim=(2, 3))
+        return x.pow(self.p).mean(dim=(2, 3)).pow(1/self.p)
+
+class GEM_pool_channel(nn.Module):
+    def __init__(self, num_channels):
+        super().__init__()
+        self.register_parameter("p", nn.Parameter(torch.ones(1, num_channels)))
+
+    def forward(self, x):
+        return x.pow(self.p.view(1, -1, 1, 1)).mean(dim=(2, 3)).pow(1/self.p)
 
 class ConvMixBlock(nn.Module):
     """Here we go again. Another day another module. Would be close to ConvActBlock but with other
